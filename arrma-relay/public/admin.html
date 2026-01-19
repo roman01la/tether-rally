@@ -83,6 +83,20 @@
 			.btn-stop:hover {
 				background: #ff6b6b;
 			}
+			.btn-kick {
+				background: #b91c1c;
+				color: white;
+				min-width: 80px;
+				padding: 8px 16px;
+				font-size: 14px;
+			}
+			.btn-kick:hover {
+				background: #dc2626;
+			}
+			.btn-kick:disabled {
+				background: #3a3a5a;
+				cursor: not-allowed;
+			}
 			.race-time {
 				font-size: 48px;
 				font-weight: 700;
@@ -102,6 +116,93 @@
 			.message.error {
 				background: #9d0208;
 			}
+
+			/* Token Generator */
+			.section-title {
+				font-size: 18px;
+				font-weight: 300;
+				color: #888;
+				margin: 40px 0 20px 0;
+			}
+			.token-card {
+				background: #16213e;
+				border-radius: 12px;
+				padding: 20px;
+				width: 100%;
+				max-width: 400px;
+			}
+			.token-row {
+				display: flex;
+				gap: 10px;
+				margin-bottom: 15px;
+			}
+			.token-select {
+				flex: 1;
+				padding: 12px;
+				font-size: 14px;
+				border: 2px solid #3a3a5a;
+				border-radius: 8px;
+				background: #1a1a2e;
+				color: #eee;
+			}
+			.btn-generate {
+				background: #3a3a7a;
+				color: white;
+				padding: 12px 20px;
+				font-size: 14px;
+				min-width: auto;
+			}
+			.btn-generate:hover {
+				background: #4a4a9a;
+			}
+			.token-output {
+				background: #1a1a2e;
+				border: 2px solid #3a3a5a;
+				border-radius: 8px;
+				padding: 15px;
+				font-family: monospace;
+				font-size: 14px;
+				word-break: break-all;
+				color: #40916c;
+				min-height: 50px;
+				cursor: pointer;
+				position: relative;
+			}
+			.token-output:hover {
+				border-color: #5a5a8a;
+			}
+			.token-output .hint {
+				color: #666;
+				font-size: 12px;
+				font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+			}
+			.token-expires {
+				margin-top: 10px;
+				font-size: 12px;
+				color: #888;
+			}
+			.copy-feedback {
+				position: absolute;
+				top: 50%;
+				left: 50%;
+				transform: translate(-50%, -50%);
+				background: rgba(64, 145, 108, 0.9);
+				padding: 8px 16px;
+				border-radius: 6px;
+				font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+				animation: fadeOut 1s ease-out forwards;
+			}
+			@keyframes fadeOut {
+				0% {
+					opacity: 1;
+				}
+				70% {
+					opacity: 1;
+				}
+				100% {
+					opacity: 0;
+				}
+			}
 		</style>
 	</head>
 	<body>
@@ -114,7 +215,26 @@
 			</div>
 			<div class="status-row">
 				<span class="status-label">Player Connected</span>
-				<span id="player-status" class="status-value offline">No</span>
+				<span style="display: flex; align-items: center; gap: 10px">
+					<span id="player-status" class="status-value offline">No</span>
+					<button class="btn btn-kick" id="kick-btn" onclick="kickPlayer()" disabled>Kick</button>
+				</span>
+			</div>
+			<div class="status-row">
+				<span class="status-label">Video Feed</span>
+				<span id="video-status" class="status-value offline">No</span>
+			</div>
+			<div class="status-row">
+				<span class="status-label">Player Ready</span>
+				<span id="ready-status" class="status-value offline">No</span>
+			</div>
+			<div class="status-row">
+				<span class="status-label">Throttle Limit</span>
+				<span style="display: flex; align-items: center; gap: 10px">
+					<input type="range" id="throttle-slider" min="10" max="50" value="25" style="width: 120px" oninput="updateThrottleLabel()" />
+					<span id="throttle-value" style="min-width: 40px">25%</span>
+					<button class="btn btn-kick" onclick="setThrottle()">Set</button>
+				</span>
 			</div>
 		</div>
 
@@ -127,6 +247,26 @@
 
 		<div id="message" class="message" style="display: none"></div>
 
+		<h2 class="section-title">🔑 Token Generator</h2>
+
+		<div class="token-card">
+			<div class="token-row">
+				<select id="token-duration" class="token-select">
+					<option value="15">15 minutes</option>
+					<option value="30">30 minutes</option>
+					<option value="60" selected>1 hour</option>
+					<option value="120">2 hours</option>
+					<option value="480">8 hours</option>
+					<option value="1440">24 hours</option>
+				</select>
+				<button class="btn btn-generate" onclick="generateToken()">Generate</button>
+			</div>
+			<div id="token-output" class="token-output" onclick="copyToken()">
+				<span class="hint">Click "Generate" to create a token</span>
+			</div>
+			<div id="token-expires" class="token-expires"></div>
+		</div>
+
 		<!-- Optional: Load config.js for deployment-specific URLs -->
 		<script src="config.js" onerror="console.log('No config.js found, using defaults')"></script>
 
@@ -136,6 +276,8 @@
 
 			let raceStartTime = null;
 			let timerInterval = null;
+
+			let throttleInitialized = false; // Only set slider from server once on load
 
 			async function updateStatus() {
 				try {
@@ -148,9 +290,49 @@
 					document.getElementById('player-status').textContent = data.channel_open ? 'Yes' : 'No';
 					document.getElementById('player-status').className = 'status-value ' + (data.channel_open ? 'online' : 'offline');
 
-					document.getElementById('start-btn').disabled = !data.channel_open;
+					document.getElementById('video-status').textContent = data.video_connected ? 'Yes' : 'No';
+					document.getElementById('video-status').className = 'status-value ' + (data.video_connected ? 'online' : 'offline');
+
+					document.getElementById('ready-status').textContent = data.player_ready ? 'Yes' : 'No';
+					document.getElementById('ready-status').className = 'status-value ' + (data.player_ready ? 'online' : 'offline');
+
+					// Only initialize throttle slider once from server (not on every poll)
+					if (!throttleInitialized && data.throttle_limit !== undefined) {
+						const pct = Math.round(data.throttle_limit * 100);
+						document.getElementById('throttle-slider').value = pct;
+						document.getElementById('throttle-value').textContent = pct + '%';
+						throttleInitialized = true;
+					}
+
+					// Only enable start when player is ready (has video + clicked ready)
+					document.getElementById('start-btn').disabled = !data.player_ready;
+					document.getElementById('kick-btn').disabled = !data.channel_open;
 				} catch (e) {
 					console.error('Status check failed:', e);
+				}
+			}
+
+			function updateThrottleLabel() {
+				const val = document.getElementById('throttle-slider').value;
+				document.getElementById('throttle-value').textContent = val + '%';
+			}
+
+			async function setThrottle() {
+				const val = parseInt(document.getElementById('throttle-slider').value);
+				try {
+					const res = await fetch(`${CONTROL_URL}/admin/set-throttle`, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ limit: val / 100 }),
+					});
+					const data = await res.json();
+					if (data.success) {
+						showMessage(`Throttle set to ${val}%`);
+					} else {
+						showMessage(data.error || 'Failed to set throttle', true);
+					}
+				} catch (e) {
+					showMessage('Failed to set throttle: ' + e.message, true);
 				}
 			}
 
@@ -205,10 +387,81 @@
 					console.error('Stop race error:', e);
 				}
 			}
+			async function kickPlayer() {
+				if (!confirm('Kick player and revoke their token?')) return;
 
+				// Stop timer if running
+				if (timerInterval) {
+					clearInterval(timerInterval);
+					timerInterval = null;
+				}
+				raceStartTime = null;
+				document.getElementById('race-time').textContent = '00:00.000';
+
+				try {
+					const res = await fetch(`${CONTROL_URL}/admin/kick-player`, { method: 'POST' });
+					const data = await res.json();
+
+					if (data.success) {
+						showMessage('Player kicked & token revoked');
+						updateStatus(); // Refresh status immediately
+					} else {
+						showMessage(data.error || 'Failed to kick player', true);
+					}
+				} catch (e) {
+					showMessage('Failed to kick player: ' + e.message, true);
+				}
+			}
 			// Update status every 2 seconds
 			updateStatus();
 			setInterval(updateStatus, 2000);
+
+			// ===== Token Generator =====
+			let currentToken = null;
+
+			async function generateToken() {
+				const minutes = parseInt(document.getElementById('token-duration').value);
+				const outputEl = document.getElementById('token-output');
+				const expiresEl = document.getElementById('token-expires');
+
+				outputEl.innerHTML = '<span class="hint">Generating...</span>';
+				expiresEl.textContent = '';
+
+				try {
+					const res = await fetch('/admin/generate-token', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ minutes }),
+					});
+
+					if (!res.ok) {
+						throw new Error('Failed to generate token');
+					}
+
+					const data = await res.json();
+					currentToken = data.token;
+					outputEl.textContent = data.token;
+
+					const expiresDate = new Date(data.expiresAt);
+					expiresEl.textContent = `Expires: ${expiresDate.toLocaleString()}`;
+				} catch (e) {
+					outputEl.innerHTML = '<span class="hint" style="color: #e63946;">Error generating token</span>';
+					console.error('Token generation error:', e);
+				}
+			}
+
+			function copyToken() {
+				if (!currentToken) return;
+
+				navigator.clipboard.writeText(currentToken).then(() => {
+					const outputEl = document.getElementById('token-output');
+					const feedback = document.createElement('div');
+					feedback.className = 'copy-feedback';
+					feedback.textContent = 'Copied!';
+					outputEl.appendChild(feedback);
+					setTimeout(() => feedback.remove(), 1000);
+				});
+			}
 		</script>
 	</body>
 </html>

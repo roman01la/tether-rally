@@ -337,6 +337,117 @@
 			#race-timer.active {
 				display: block;
 			}
+
+			/* Race stopped overlay */
+			#stopped-overlay {
+				position: absolute;
+				inset: 0;
+				display: none;
+				align-items: center;
+				justify-content: center;
+				background: rgba(0, 0, 0, 0.8);
+				z-index: 50;
+			}
+			#stopped-overlay.active {
+				display: flex;
+			}
+			#stopped-content {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: 20px;
+			}
+			#stopped-text {
+				font-size: 60px;
+				font-weight: 700;
+				color: #e63946;
+				text-shadow: 0 0 40px rgba(230, 57, 70, 0.5);
+				animation: stopped-flash 0.5s ease-out;
+			}
+			#stopped-time {
+				font-size: 72px;
+				font-weight: 700;
+				font-family: monospace;
+				color: #40916c;
+				text-shadow: 0 0 30px rgba(64, 145, 108, 0.5);
+				animation: stopped-flash 0.5s ease-out 0.2s both;
+			}
+			@keyframes stopped-flash {
+				0% {
+					transform: scale(1.3);
+					opacity: 0;
+				}
+				100% {
+					transform: scale(1);
+					opacity: 1;
+				}
+			}
+
+			/* Waiting for race overlay */
+			#waiting-overlay {
+				position: absolute;
+				inset: 0;
+				display: none;
+				align-items: center;
+				justify-content: center;
+				background: rgba(0, 0, 0, 0.6);
+				z-index: 45;
+				pointer-events: none;
+			}
+			#waiting-overlay.active {
+				display: flex;
+			}
+			#waiting-content {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: 15px;
+			}
+			#waiting-text {
+				font-size: 28px;
+				font-weight: 600;
+				color: #888;
+				text-transform: uppercase;
+				letter-spacing: 4px;
+			}
+			#waiting-spinner {
+				width: 40px;
+				height: 40px;
+				border: 3px solid rgba(255, 255, 255, 0.1);
+				border-top-color: rgba(255, 255, 255, 0.5);
+				border-radius: 50%;
+				animation: spin 1s linear infinite;
+			}
+			#ready-btn {
+				padding: 20px 60px;
+				font-size: 24px;
+				font-weight: 700;
+				border: none;
+				border-radius: 16px;
+				background: #40916c;
+				color: white;
+				cursor: pointer;
+				text-transform: uppercase;
+				letter-spacing: 3px;
+				pointer-events: auto;
+				margin-top: 20px;
+				transition: all 0.2s ease;
+				box-shadow: 0 4px 15px rgba(64, 145, 108, 0.4);
+			}
+			#ready-btn:hover:not(:disabled) {
+				background: #52b788;
+				transform: translateY(-2px);
+				box-shadow: 0 6px 20px rgba(64, 145, 108, 0.5);
+			}
+			#ready-btn:active:not(:disabled) {
+				transform: translateY(0);
+			}
+			#ready-btn:disabled {
+				background: #555;
+				color: #888;
+				cursor: not-allowed;
+				box-shadow: none;
+			}
 		</style>
 	</head>
 	<body>
@@ -371,6 +482,23 @@
 			<!-- Countdown Overlay -->
 			<div id="countdown-overlay">
 				<div id="countdown-number">3</div>
+			</div>
+
+			<!-- Race Stopped Overlay -->
+			<div id="stopped-overlay">
+				<div id="stopped-content">
+					<div id="stopped-text">FINISH</div>
+					<div id="stopped-time">00:00.000</div>
+				</div>
+			</div>
+
+			<!-- Waiting for Race Overlay -->
+			<div id="waiting-overlay">
+				<div id="waiting-content">
+					<div id="waiting-spinner"></div>
+					<div id="waiting-text">Waiting for race</div>
+					<button id="ready-btn" disabled onclick="sendReady()">Ready</button>
+				</div>
 			</div>
 
 			<!-- Video Stats -->
@@ -420,10 +548,55 @@
 			const CMD_CTRL = 0x01;
 			const CMD_PONG = 0x02;
 			const CMD_RACE = 0x03;
+			const CMD_STATUS = 0x04;
+			const CMD_CONFIG = 0x05;
+			const CMD_KICK = 0x06; // Pi -> Browser: you have been kicked
 
 			// Race sub-commands
 			const RACE_START_COUNTDOWN = 0x01;
 			const RACE_STOP = 0x02;
+
+			// Status sub-commands
+			const STATUS_VIDEO = 0x01; // payload: 1 byte (0=disconnected, 1=connected)
+			const STATUS_READY = 0x02; // payload: 1 byte (0=not ready, 1=ready)
+
+			let playerReady = false;
+
+			function sendVideoStatus(connected) {
+				if (controlChannel && controlChannel.readyState === 'open') {
+					const buf = new ArrayBuffer(5);
+					const view = new DataView(buf);
+					view.setUint16(0, 0, true); // seq=0 for status messages
+					view.setUint8(2, CMD_STATUS);
+					view.setUint8(3, STATUS_VIDEO);
+					view.setUint8(4, connected ? 1 : 0);
+					controlChannel.send(buf);
+					console.log('Sent video status:', connected);
+					// Enable ready button when video is connected
+					if (connected && !playerReady) {
+						document.getElementById('ready-btn').disabled = false;
+					}
+				}
+			}
+
+			function sendReady() {
+				if (controlChannel && controlChannel.readyState === 'open' && !playerReady) {
+					const buf = new ArrayBuffer(5);
+					const view = new DataView(buf);
+					view.setUint16(0, 0, true);
+					view.setUint8(2, CMD_STATUS);
+					view.setUint8(3, STATUS_READY);
+					view.setUint8(4, 1);
+					controlChannel.send(buf);
+					playerReady = true;
+					const btn = document.getElementById('ready-btn');
+					btn.textContent = '✓ Ready';
+					btn.classList.add('ready');
+					btn.disabled = true;
+					document.getElementById('waiting-text').textContent = 'Waiting for admin';
+					console.log('Sent ready status');
+				}
+			}
 
 			const TOKEN_STORAGE_KEY = 'tether-rally-token';
 			let controlSeq = 0;
@@ -436,14 +609,16 @@
 			let thrSlider = 0;
 			let thr = 0;
 			let str = 0;
+			let strTarget = 0; // Target steering for keyboard (for smooth interpolation)
 			let latency = 0;
 			let isConnected = false;
 			let deviceOnline = false;
 			let videoConnected = false;
 			const keys = new Set();
-			const thrLimit = 1.0; // UI limit (ESP32 enforces actual safety limit)
+			let thrLimit = 0.5; // Throttle limit from admin (0-1)
 			const keyStep = 1.0;
 			const strStep = 1.0;
+			const strSmoothRate = 0.15; // How fast steering interpolates (0-1, lower = smoother)
 
 			// Race state
 			let raceStartTime = null;
@@ -468,6 +643,8 @@
 			const countdownOverlay = document.getElementById('countdown-overlay');
 			const countdownNumber = document.getElementById('countdown-number');
 			const raceTimerEl = document.getElementById('race-timer');
+			const stoppedOverlay = document.getElementById('stopped-overlay');
+			const waitingOverlay = document.getElementById('waiting-overlay');
 
 			let throttleTouchId = null;
 			let steeringTouchId = null;
@@ -531,6 +708,13 @@
 			}
 
 			function sendControl() {
+				// Smooth keyboard steering interpolation (only when using keyboard)
+				if (keys.size > 0 || str !== strTarget) {
+					str += (strTarget - str) * strSmoothRate;
+					// Snap to target when very close
+					if (Math.abs(str - strTarget) < 0.01) str = strTarget;
+				}
+
 				if (controlChannel && controlChannel.readyState === 'open') {
 					// Packet: seq(2) + cmd(1) + thr(2) + str(2) = 7 bytes
 					const buf = new ArrayBuffer(7);
@@ -606,6 +790,11 @@
 						videoConnected = true;
 						throttleZone.classList.remove('disabled');
 						steeringZone.classList.remove('disabled');
+						sendVideoStatus(true);
+						// Enable ready button when video connects (if not already ready)
+						if (!playerReady) {
+							document.getElementById('ready-btn').disabled = false;
+						}
 					};
 
 					fpvPeerConnection.oniceconnectionstatechange = () => {
@@ -615,6 +804,7 @@
 							videoPlaceholder.innerHTML = '<div class="spinner"></div><span>FPV Disconnected - Reconnecting...</span>';
 							videoPlaceholder.style.display = 'flex';
 							videoConnected = false;
+							sendVideoStatus(false);
 							// Try to reconnect video after a short delay
 							setTimeout(() => {
 								if (
@@ -843,12 +1033,64 @@
 				console.log('Race command received:', subCmd);
 				switch (subCmd) {
 					case RACE_START_COUNTDOWN:
+						stoppedOverlay.classList.remove('active'); // Hide stopped overlay if visible
+						waitingOverlay.classList.remove('active'); // Hide waiting overlay
 						showCountdown();
 						break;
 					case RACE_STOP:
+						// Capture final time before stopping
+						let finalTime = '00:00.000';
+						if (raceStartTime) {
+							const elapsed = Date.now() - raceStartTime;
+							const mins = Math.floor(elapsed / 60000);
+							const secs = Math.floor((elapsed % 60000) / 1000);
+							const ms = elapsed % 1000;
+							finalTime = String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0') + '.' + String(ms).padStart(3, '0');
+						}
+
 						stopRaceTimer();
+						countdownOverlay.classList.remove('active'); // Hide countdown if in progress
+
+						// Show stopped overlay with final time
+						document.getElementById('stopped-time').textContent = finalTime;
+						stoppedOverlay.classList.add('active');
+						setTimeout(() => {
+							stoppedOverlay.classList.remove('active');
+							waitingOverlay.classList.add('active'); // Show waiting overlay after finish fades
+						}, 4000); // Show longer so they can see the time
 						break;
 				}
+			}
+
+			function handleConfigCommand(data) {
+				// Format: seq(2) + cmd(1) + throttle_limit(2 as int16)
+				if (data.byteLength >= 5) {
+					const view = new DataView(data);
+					const thrLimitScaled = view.getInt16(3, true);
+					thrLimit = thrLimitScaled / 32767;
+					console.log('Config received: throttle_limit =', thrLimit);
+				}
+			}
+
+			function handleKicked() {
+				console.log('Kicked by admin');
+				// Stop everything
+				stopFpvStream();
+				stopControlChannel();
+				// Reset ready state
+				playerReady = false;
+				const readyBtn = document.getElementById('ready-btn');
+				readyBtn.textContent = 'Ready';
+				readyBtn.classList.remove('ready');
+				readyBtn.disabled = true;
+				document.getElementById('waiting-text').textContent = 'Waiting for race';
+				// Clear token so they can't auto-reconnect
+				currentToken = null;
+				// Show kicked message
+				loginError.textContent = 'You have been kicked by the admin';
+				loginError.style.display = 'block';
+				// Go back to login screen
+				showLoginScreen();
 			}
 			// ==================================
 
@@ -916,6 +1158,8 @@
 					setStatus('connected', 'Connected');
 					throttleZone.classList.remove('disabled');
 					steeringZone.classList.remove('disabled');
+					// Show waiting overlay until race starts
+					waitingOverlay.classList.add('active');
 					// Start 50Hz control loop
 					controlInterval = setInterval(sendControl, 20);
 					// Start ping for latency measurement
@@ -930,6 +1174,7 @@
 					setStatus('disconnected', 'Disconnected');
 					throttleZone.classList.add('disabled');
 					steeringZone.classList.add('disabled');
+					waitingOverlay.classList.remove('active'); // Hide waiting when disconnected
 				};
 
 				controlChannel.onerror = (err) => {
@@ -958,6 +1203,14 @@
 							else if (cmd === CMD_RACE && view.byteLength >= 4) {
 								const subCmd = view.getUint8(3);
 								handleRaceCommand(subCmd);
+							}
+							// Handle config commands (throttle limit)
+							else if (cmd === CMD_CONFIG) {
+								handleConfigCommand(event.data);
+							}
+							// Handle kick command
+							else if (cmd === CMD_KICK) {
+								handleKicked();
 							}
 						}
 					}
@@ -1233,8 +1486,8 @@
 				if (!isConnected) return;
 				thrSlider = (keys.has('w') || keys.has('arrowup') ? keyStep : 0) + (keys.has('s') || keys.has('arrowdown') ? -keyStep : 0);
 				thr = thrSlider * thrLimit;
-				str = (keys.has('d') || keys.has('arrowright') ? strStep : 0) + (keys.has('a') || keys.has('arrowleft') ? -strStep : 0);
-				sendControl();
+				// Set target steering (actual str interpolates smoothly in the control loop)
+				strTarget = (keys.has('d') || keys.has('arrowright') ? strStep : 0) + (keys.has('a') || keys.has('arrowleft') ? -strStep : 0);
 			}
 
 			window.addEventListener('keydown', (e) => {
@@ -1260,6 +1513,7 @@
 				thrSlider = 0;
 				thr = 0;
 				str = 0;
+				strTarget = 0;
 				if (isConnected) sendControl();
 			});
 
@@ -1271,6 +1525,7 @@
 					thrSlider = 0;
 					thr = 0;
 					str = 0;
+					strTarget = 0;
 					if (isConnected) sendControl();
 				}
 			});

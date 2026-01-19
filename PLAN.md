@@ -8,14 +8,14 @@ A web-based platform where users can remotely control a real RC car over the int
 
 1. **Real-time RC Car Control** ✅ (Implemented)
 
-   - WebRTC DataChannel binary protocol (PING/CTRL/PONG commands)
+   - WebRTC DataChannel binary protocol (PING/CTRL/PONG/RACE/STATUS/CONFIG/KICK commands)
    - Direct P2P connection via Cloudflare TURN (10-15ms RTT)
    - Pi relay: DataChannel → UDP → ESP32
    - ESP32: Dual-core FreeRTOS (UDP on Core 0, Control on Core 1)
    - 200 Hz output loop with EMA smoothing + slew rate limiting
    - Touch controls (dual-zone: throttle left, steering right)
-   - Keyboard controls (WASD / Arrow keys)
-   - Configurable throttle limits (forward 25%, backward 20%)
+   - Keyboard controls (WASD / Arrow keys) with smooth interpolation
+   - Configurable throttle limits (10-50% via admin, ESP32 hard limit 50%)
    - Safety limits enforced on ESP32 (not browser)
    - Latency measurement with EMA smoothing
    - **Auto-reconnect on connection loss** with exponential backoff
@@ -24,11 +24,13 @@ A web-based platform where users can remotely control a real RC car over the int
 2. **Security & Access Control** ✅ (Implemented)
 
    - HMAC-SHA256 signed time-limited tokens
-   - Token generator script (`generate-token.js`)
+   - Token generator script (`generate-token.js`) + admin web UI generator
    - Newer tokens automatically invalidate older ones
    - Pi relay validates tokens (not Cloudflare Worker)
    - LocalStorage persistence for session recovery
    - No shared passwords or third-party auth needed
+   - **Admin kick with token revocation** (persistent, last 10 revoked)
+   - **Basic auth protected admin page** (/admin.html)
 
 3. **Racing Game UI** ✅ (Implemented)
 
@@ -50,14 +52,27 @@ A web-based platform where users can remotely control a real RC car over the int
    - 720p @ 2Mbps @ 30fps H.264
    - ~100-300ms end-to-end latency
 
-5. **Tournament System** 🔲 (Planned)
+5. **Admin Dashboard** ✅ (Implemented)
+
+   - Race state management (idle → countdown → racing)
+   - Start race with 3-second countdown (3-2-1-GO!)
+   - Stop race command
+   - Live status: ESP32 connection, player connected, video feed, player ready
+   - Throttle limit control (10-50% slider)
+   - Kick player with token revocation
+   - Token generator with configurable duration (15min - 24h)
+   - Real-time race timer (mm:ss.ms format)
+   - Player must click "Ready" after video connects before race can start
+   - Video status reported from browser to Pi
+
+6. **Tournament System** 🔲 (Planned)
 
    - User registration and queue management
    - Timed race sessions
    - Leaderboard and rankings
    - Support for 10+ participants per tournament
 
-6. **Track Timing System** 🔲 (Planned)
+7. **Track Timing System** 🔲 (Planned)
    - Start/finish line detection
    - Lap timing with millisecond precision
    - Automatic race state management
@@ -78,16 +93,18 @@ arrma-remote/
 │   ├── config.h            # WiFi credentials (gitignored)
 │   └── config.h.example    # Template for config.h
 ├── arrma-relay/
-│   ├── src/index.ts        # Cloudflare Workers (static + TURN credentials)
+│   ├── src/index.ts        # Cloudflare Workers (static + TURN + admin auth + token gen)
 │   ├── public/
-│   │   ├── index.html      # Web UI (served by Workers)
+│   │   ├── index.html      # Player UI (served by Workers)
+│   │   ├── admin.html      # Admin dashboard (basic auth protected)
 │   │   ├── config.js       # URL configuration (gitignored)
 │   │   └── config.js.example # Template for config.js
 │   ├── wrangler.jsonc      # Cloudflare Workers config
 │   └── package.json
 └── pi-scripts/
-    ├── control-relay.py    # WebRTC DataChannel → UDP relay
+    ├── control-relay.py    # WebRTC DataChannel → UDP relay + race management
     ├── control-relay.service # systemd service for relay
+    ├── deploy.sh           # Quick deploy script to Pi
     ├── .env                 # Pi secrets (gitignored, on Pi only)
     ├── .env.example         # Template for Pi .env
     └── update-turn-credentials.sh  # TURN credential refresh script
@@ -106,11 +123,15 @@ All secrets are externalized for open-source compatibility:
 
 ### Binary Protocol
 
-| Command | Byte | Payload                            | Description                      |
-| ------- | ---- | ---------------------------------- | -------------------------------- |
-| PING    | 0x00 | seq(2) + timestamp(4)              | Latency measurement              |
-| CTRL    | 0x01 | seq(2) + throttle(2) + steering(2) | Control values (-32767 to 32767) |
-| PONG    | 0x02 | timestamp(4)                       | Response to PING (from ESP32)    |
+| Command | Byte | Payload                            | Description                           |
+| ------- | ---- | ---------------------------------- | ------------------------------------- |
+| PING    | 0x00 | seq(2) + timestamp(4)              | Latency measurement                   |
+| CTRL    | 0x01 | seq(2) + throttle(2) + steering(2) | Control values (-32767 to 32767)      |
+| PONG    | 0x02 | timestamp(4)                       | Response to PING (from ESP32)         |
+| RACE    | 0x03 | sub-cmd(1)                         | Race commands (START=0x01, STOP=0x02) |
+| STATUS  | 0x04 | sub-cmd(1) + value(1)              | Browser→Pi: VIDEO=0x01, READY=0x02    |
+| CONFIG  | 0x05 | type(1) + value(4)                 | Pi→Browser: throttle limit            |
+| KICK    | 0x06 | -                                  | Pi→Browser: you have been kicked      |
 
 Packet format: `seq(uint16 LE) + cmd(uint8) + payload`
 
@@ -576,18 +597,18 @@ CREATE TABLE race_results (
 
 ## Technology Stack
 
-| Component     | Technology                   | Reason                             |
-| ------------- | ---------------------------- | ---------------------------------- |
-| RC Control    | ESP32 + UDP                  | Low latency, simple protocol       |
-| Video Capture | Raspberry Pi + Camera        | Hardware encoding, flexible        |
-| Video Server  | MediaMTX                     | Open source, WebRTC support        |
-| Control Relay | Pi + aiortc                  | WebRTC DataChannel to UDP bridge   |
-| Backend       | Cloudflare Workers           | Serverless, global edge            |
-| Database      | PostgreSQL                   | Reliable, good for relational data |
-| Frontend      | Vanilla JS (single HTML)     | No build step, simple deployment   |
-| Hosting       | Cloudflare Workers + Tunnel  | Free tier, low latency             |
-| Auth          | HMAC tokens                  | Simple, no third-party deps        |
-| Real-time     | WebRTC DataChannel           | P2P, ~10-15ms latency              |
+| Component     | Technology                  | Reason                             |
+| ------------- | --------------------------- | ---------------------------------- |
+| RC Control    | ESP32 + UDP                 | Low latency, simple protocol       |
+| Video Capture | Raspberry Pi + Camera       | Hardware encoding, flexible        |
+| Video Server  | MediaMTX                    | Open source, WebRTC support        |
+| Control Relay | Pi + aiortc                 | WebRTC DataChannel to UDP bridge   |
+| Backend       | Cloudflare Workers          | Serverless, global edge            |
+| Database      | PostgreSQL                  | Reliable, good for relational data |
+| Frontend      | Vanilla JS (single HTML)    | No build step, simple deployment   |
+| Hosting       | Cloudflare Workers + Tunnel | Free tier, low latency             |
+| Auth          | HMAC tokens                 | Simple, no third-party deps        |
+| Real-time     | WebRTC DataChannel          | P2P, ~10-15ms latency              |
 
 ---
 
@@ -689,6 +710,18 @@ This allows testing the core concept before building full tournament system.
 - [x] **Proper disconnection UI state (controls disabled)**
 - [x] **Open source preparation (secrets externalized)**
 - [x] **SETUP.md deployment guide**
+- [x] **Admin dashboard (admin.html) with basic auth**
+- [x] **Race state management (idle → countdown → racing)**
+- [x] **Admin kick player with token revocation**
+- [x] **Persistent revoked tokens (file-based, last 10)**
+- [x] **Smooth keyboard steering interpolation**
+- [x] **Video status reporting from browser to Pi**
+- [x] **Throttle limit control from admin (10-50% range)**
+- [x] **ESP32 hard throttle limit raised to 50% forward, 30% backward**
+- [x] **CMD_KICK notification to browser on kick**
+- [x] **Player "Ready" button (must click before admin can start race)**
+- [x] **Admin token generator (web UI)**
+- [x] **Deploy script for Pi (deploy.sh)**
 
 ---
 

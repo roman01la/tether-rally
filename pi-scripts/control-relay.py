@@ -54,10 +54,17 @@ CMD_PING = 0x00
 CMD_CTRL = 0x01
 CMD_PONG = 0x02
 CMD_RACE = 0x03  # Race commands (start countdown, etc.)
+CMD_STATUS = 0x04  # Browser -> Pi status updates
+CMD_CONFIG = 0x05  # Pi -> Browser config updates (throttle limit, etc.)
+CMD_KICK = 0x06    # Pi -> Browser: you have been kicked
 
 # Race sub-commands (sent as payload after CMD_RACE)
 RACE_START_COUNTDOWN = 0x01
 RACE_STOP = 0x02
+
+# Status sub-commands (browser -> Pi)
+STATUS_VIDEO = 0x01
+STATUS_READY = 0x02
 
 # ----- State -----
 
@@ -68,15 +75,66 @@ udp_sock.setblocking(False)
 # Active peer connection
 pc = None
 control_channel = None
+video_connected = False  # Reported by browser
+player_ready = False     # Player clicked Ready button
 
-# Race state
+# Race state: "idle" (controls blocked), "countdown" (controls blocked), "racing" (controls allowed)
+race_state = "idle"
 race_start_time = None  # Unix timestamp when race started (after countdown)
+countdown_task = None  # Asyncio task for countdown timer
+
+# Throttle limit (0.0 to 0.5 max, sent to browser - ESP32 hard limit is 50%)
+throttle_limit = 0.25  # Default 25%
+
+# Revoked tokens (persisted to file, keeps last 10)
+REVOKED_TOKENS_FILE = '/home/pi/revoked_tokens.txt'
+revoked_tokens = []  # List to maintain order
+current_player_token = None  # Track current player's token for kick functionality
+
+def load_revoked_tokens():
+    """Load revoked tokens from file on startup"""
+    global revoked_tokens
+    try:
+        with open(REVOKED_TOKENS_FILE, 'r') as f:
+            revoked_tokens = [line.strip() for line in f if line.strip()]
+            logger.info(f"Loaded {len(revoked_tokens)} revoked tokens from file")
+    except FileNotFoundError:
+        revoked_tokens = []
+        logger.info("No revoked tokens file found, starting fresh")
+    except Exception as e:
+        logger.warning(f"Error loading revoked tokens: {e}")
+        revoked_tokens = []
+
+def save_revoked_tokens():
+    """Save revoked tokens to file (keep last 10)"""
+    try:
+        with open(REVOKED_TOKENS_FILE, 'w') as f:
+            for token in revoked_tokens[-10:]:
+                f.write(token + '\n')
+    except Exception as e:
+        logger.warning(f"Error saving revoked tokens: {e}")
+
+def revoke_token(token: str):
+    """Add token to revoked list and persist"""
+    global revoked_tokens
+    if token not in revoked_tokens:
+        revoked_tokens.append(token)
+        # Keep only last 10
+        if len(revoked_tokens) > 10:
+            revoked_tokens = revoked_tokens[-10:]
+        save_revoked_tokens()
+        logger.info(f"Revoked token: {token[:8]}... (total: {len(revoked_tokens)})")
 
 # ----- Token Validation -----
 
 def validate_token(token: str) -> bool:
     """Validate HMAC-SHA256 signed token (same as Cloudflare relay)"""
     if not token or len(token) != 24:
+        return False
+    
+    # Check if token is revoked
+    if token in revoked_tokens:
+        logger.warning("Token is revoked")
         return False
     
     expiry_hex = token[:8]
@@ -168,7 +226,7 @@ async def discover_esp32():
 
 async def handle_offer(request):
     """Handle WebRTC signaling (WHIP-like POST with SDP offer)"""
-    global pc, control_channel
+    global pc, control_channel, current_player_token
     
     # Validate token
     token = request.query.get('token', '')
@@ -177,6 +235,7 @@ async def handle_offer(request):
         return web.Response(status=401, text='Invalid or expired token')
     
     logger.info("Token validated, processing WebRTC offer")
+    current_player_token = token  # Track for kick functionality
     
     # Close existing connection
     if pc:
@@ -209,10 +268,14 @@ async def handle_offer(request):
         control_channel = channel
         logger.info(f"DataChannel '{channel.label}' opened")
         
+        # Send current config to new client
+        send_config()
+        
         ctrl_count = [0]  # Use list to allow mutation in nested function
         
         @channel.on("message")
         def on_message(message):
+            global race_state
             # New packet format: seq(2) + cmd(1) + payload
             if isinstance(message, bytes) and len(message) >= 3:
                 seq = struct.unpack('<H', message[0:2])[0]
@@ -221,9 +284,22 @@ async def handle_offer(request):
                 if cmd == CMD_PING:  # PING - echo back as PONG
                     pong = message[0:2] + bytes([CMD_PONG]) + message[3:]  # Keep seq, change cmd to PONG
                     channel.send(pong)
-                elif cmd == CMD_CTRL:  # CTRL - forward to ESP32
-                    ctrl_count[0] += 1
-                    forward_to_esp32(message)
+                elif cmd == CMD_CTRL:  # CTRL - forward to ESP32 only if racing
+                    if race_state == "racing":
+                        ctrl_count[0] += 1
+                        forward_to_esp32(message)
+                    # else: silently drop control commands (race not active)
+                elif cmd == CMD_STATUS:  # STATUS - browser reporting state
+                    global video_connected, player_ready
+                    if len(message) >= 5:
+                        sub_cmd = message[3]
+                        value = message[4] == 1
+                        if sub_cmd == STATUS_VIDEO:
+                            video_connected = value
+                            logger.info(f"Video status: {'connected' if video_connected else 'disconnected'}")
+                        elif sub_cmd == STATUS_READY:
+                            player_ready = value
+                            logger.info(f"Player ready: {player_ready}")
         
         @channel.on("close")
         def on_close():
@@ -233,9 +309,16 @@ async def handle_offer(request):
     
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
+        global pc, control_channel, video_connected, player_ready
         logger.info(f"Connection state: {pc.connectionState}")
-        if pc.connectionState == "failed":
-            await pc.close()
+        if pc.connectionState in ("failed", "closed", "disconnected"):
+            logger.info("Connection lost, cleaning up")
+            control_channel = None
+            video_connected = False
+            player_ready = False
+            if pc.connectionState != "closed":
+                await pc.close()
+            pc = None
     
     # Parse offer from browser
     offer_sdp = await request.text()
@@ -279,7 +362,10 @@ async def handle_health(request):
             "status": "ok",
             "esp32_ip": ESP32_IP,
             "connected": pc is not None and pc.connectionState == "connected",
-            "channel_open": control_channel is not None and control_channel.readyState == "open"
+            "channel_open": control_channel is not None and control_channel.readyState == "open",
+            "video_connected": video_connected,
+            "player_ready": player_ready,
+            "throttle_limit": throttle_limit
         },
         headers={"Access-Control-Allow-Origin": "*"}
     )
@@ -307,28 +393,132 @@ def send_race_command(sub_cmd: int, payload: bytes = b''):
     logger.info(f"Sent race command: sub_cmd={sub_cmd}")
     return True
 
+def send_config():
+    """Send current config (throttle limit) to browser"""
+    global control_channel, throttle_limit
+    
+    if control_channel is None or control_channel.readyState != "open":
+        return False
+    
+    # Format: seq(2) + cmd(1) + throttle_limit(2 as int16 scaled)
+    # Scale 0.0-1.0 to 0-32767
+    thr_scaled = int(throttle_limit * 32767)
+    message = struct.pack('<HBh', 0, CMD_CONFIG, thr_scaled)
+    control_channel.send(message)
+    logger.info(f"Sent config: throttle_limit={throttle_limit}")
+    return True
+
+async def countdown_to_racing():
+    """Wait 3 seconds then enable controls"""
+    global race_state, race_start_time
+    await asyncio.sleep(3.0)
+    race_state = "racing"
+    race_start_time = time.time()
+    logger.info("Race started - controls enabled")
+
 async def handle_start_race(request):
     """Admin endpoint to start race countdown"""
-    global race_start_time
+    global race_state, countdown_task
+    
+    if race_state != "idle":
+        return web.json_response({"success": False, "error": "Race already in progress"}, status=400, headers=CORS_HEADERS)
     
     if send_race_command(RACE_START_COUNTDOWN):
-        # Record when race will start (after 3 second countdown)
-        race_start_time = time.time() + 3.0
-        return web.json_response({"success": True, "race_start_time": race_start_time}, headers=CORS_HEADERS)
+        race_state = "countdown"
+        logger.info("Race countdown started - controls disabled")
+        # Schedule transition to racing state after 3 seconds
+        countdown_task = asyncio.create_task(countdown_to_racing())
+        return web.json_response({"success": True}, headers=CORS_HEADERS)
     else:
         return web.json_response({"success": False, "error": "No player connected"}, status=400, headers=CORS_HEADERS)
 
 async def handle_stop_race(request):
     """Admin endpoint to stop race"""
-    global race_start_time
+    global race_state, race_start_time, countdown_task
+    
+    # Cancel countdown if in progress
+    if countdown_task and not countdown_task.done():
+        countdown_task.cancel()
+        countdown_task = None
+    
+    race_state = "idle"
+    race_start_time = None
+    logger.info("Race stopped - controls disabled")
     
     send_race_command(RACE_STOP)
-    race_start_time = None
     return web.json_response({"success": True}, headers=CORS_HEADERS)
+
+def send_kick_command():
+    """Send kick notification to browser before disconnecting"""
+    global control_channel
+    
+    if control_channel is None or control_channel.readyState != "open":
+        return False
+    
+    # Format: seq(2) + cmd(1) = 3 bytes
+    message = struct.pack('<HB', 0, CMD_KICK)
+    control_channel.send(message)
+    logger.info("Sent kick command to browser")
+    return True
+
+async def handle_kick_player(request):
+    """Admin endpoint to kick player and revoke their token"""
+    global pc, control_channel, current_player_token, race_state, countdown_task
+    
+    if not pc or not control_channel:
+        return web.json_response({"success": False, "error": "No player connected"}, status=400, headers=CORS_HEADERS)
+    
+    # Revoke the token so they can't reconnect with it
+    if current_player_token:
+        revoke_token(current_player_token)
+        current_player_token = None
+    
+    # Stop any active race
+    if countdown_task and not countdown_task.done():
+        countdown_task.cancel()
+        countdown_task = None
+    race_state = "idle"
+    
+    # Send kick command to browser first (so it can stop video and show message)
+    send_kick_command()
+    
+    # Give browser a moment to receive the kick command
+    await asyncio.sleep(0.1)
+    
+    # Close the connection
+    if pc:
+        await pc.close()
+        pc = None
+        control_channel = None
+    
+    logger.info("Player kicked and token revoked")
+    return web.json_response({"success": True}, headers=CORS_HEADERS)
+
+async def handle_set_throttle(request):
+    """Admin endpoint to set throttle limit"""
+    global throttle_limit
+    
+    try:
+        body = await request.json()
+        new_limit = float(body.get('limit', 0.25))
+        # Clamp to valid range (max 0.5 = ESP32 hard limit)
+        throttle_limit = max(0.1, min(0.5, new_limit))
+        logger.info(f"Throttle limit set to {throttle_limit}")
+        
+        # Send to connected browser immediately
+        send_config()
+        
+        return web.json_response({"success": True, "throttle_limit": throttle_limit}, headers=CORS_HEADERS)
+    except Exception as e:
+        logger.error(f"Error setting throttle: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=400, headers=CORS_HEADERS)
 
 # ----- Main -----
 
 async def main():
+    # Load revoked tokens from file
+    load_revoked_tokens()
+    
     # Load TURN credentials from mediamtx config
     load_turn_credentials()
     
@@ -346,6 +536,10 @@ async def main():
     app.router.add_options("/admin/start-race", handle_options)
     app.router.add_post("/admin/stop-race", handle_stop_race)
     app.router.add_options("/admin/stop-race", handle_options)
+    app.router.add_post("/admin/kick-player", handle_kick_player)
+    app.router.add_options("/admin/kick-player", handle_options)
+    app.router.add_post("/admin/set-throttle", handle_set_throttle)
+    app.router.add_options("/admin/set-throttle", handle_options)
     
     runner = web.AppRunner(app)
     await runner.setup()
@@ -358,6 +552,7 @@ async def main():
     logger.info(f"  GET  /control/health          - Health check")
     logger.info(f"  POST /admin/start-race        - Start race countdown")
     logger.info(f"  POST /admin/stop-race         - Stop race")
+    logger.info(f"  POST /admin/kick-player       - Kick player & revoke token")
     
     # Keep running
     while True:

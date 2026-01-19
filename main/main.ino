@@ -44,9 +44,9 @@ static const float STR_V_LEFT = 3.05f;
 static const float VREF = 3.30f;
 
 // Safety limits (enforced on ESP32, not browser)
-static const float THR_FWD_LIMIT = 0.25f;   // Max forward throttle (25%)
-static const float THR_BACK_LIMIT = 0.20f;  // Max backward throttle (20%)
-static const float STR_LIMIT = 1.0f;        // Max steering (100%)
+static const float THR_FWD_LIMIT = 0.50f;  // Max forward throttle (50%)
+static const float THR_BACK_LIMIT = 0.30f; // Max backward throttle (30%)
+static const float STR_LIMIT = 1.0f;       // Max steering (100%)
 
 // Behavior
 static const uint32_t TIMEOUT_HOLD_MS = 80;     // Hold last value briefly
@@ -178,7 +178,7 @@ void handlePacket(uint8_t *data, size_t len)
     // Normalize to -1.0 to 1.0
     float thr_norm = clampf((float)thr_raw / 32767.0f, -1.0f, 1.0f);
     float str_norm = clampf((float)str_raw / 32767.0f, -1.0f, 1.0f);
-    
+
     // Apply safety limits (ESP32 is the authority, not browser)
     // Asymmetric throttle: forward and backward have different limits
     if (thr_norm >= 0.0f)

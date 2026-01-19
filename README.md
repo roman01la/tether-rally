@@ -8,16 +8,20 @@ Control a real RC car from anywhere in the world through your browser. This proj
 | :--------------------: | :--------------------: |
 | ![Setup 1](imgs/1.jpg) | ![Setup 2](imgs/2.jpg) |
 | ![Setup 3](imgs/3.jpg) | ![Setup 4](imgs/4.jpg) |
-| ![Setup 5](imgs/5.jpg) |                        |
+| ![Setup 5](imgs/5.jpg) | ![Setup 6](imgs/6.jpg) |
 
 ## Features
 
 - **Low-latency control** - ~100-200ms over internet, ~10-15ms on LAN
 - **Live FPV video** - 720p @ 30fps H.264 streaming
-- **Touch & keyboard controls** - Works on mobile and desktop
+- **Touch & keyboard controls** - Works on mobile and desktop (smooth interpolation)
 - **Token-based access** - Secure, time-limited access tokens
 - **Auto-reconnect** - Handles connection drops gracefully
 - **Safety limits** - Throttle limits enforced on the car (not browser)
+- **Admin dashboard** - Race management, player monitoring, kick functionality
+- **Race state machine** - Countdown → racing → stop flow
+- **Adjustable throttle** - Admin can set 10-50% limit in real-time
+- **Player ready system** - Player must confirm ready before race starts
 
 ## How It Works
 
@@ -122,17 +126,19 @@ arrma-remote/
 │   ├── config.h.example   # WiFi credentials template
 │   └── config.h           # Your WiFi credentials (gitignored)
 ├── arrma-relay/
-│   ├── src/index.ts       # Cloudflare Worker
+│   ├── src/index.ts       # Cloudflare Worker (+ admin auth + token gen)
 │   ├── public/
-│   │   ├── index.html     # Web UI
+│   │   ├── index.html     # Player control UI
+│   │   ├── admin.html     # Admin dashboard (basic auth)
 │   │   ├── config.js.example
 │   │   └── config.js      # Your URLs (gitignored)
 │   └── wrangler.jsonc     # Worker config
 ├── pi-scripts/
-│   ├── control-relay.py   # WebRTC → UDP relay
+│   ├── control-relay.py   # WebRTC → UDP relay + race management
 │   ├── control-relay.service
+│   ├── deploy.sh          # Quick deploy to Pi
 │   └── .env.example       # Pi secrets template
-├── generate-token.js      # Access token generator
+├── generate-token.js      # Access token generator (CLI)
 ├── SETUP.md              # Configuration guide
 └── README.md             # This file
 ```
@@ -337,8 +343,9 @@ The token must use the same `TOKEN_SECRET` as configured on the Pi.
 2. Wait for services to start (~30 seconds)
 3. Open your Worker URL in a browser
 4. Enter the access token
-5. Once video connects, controls are enabled
-6. Use touch (mobile) or WASD/arrow keys (desktop)
+5. Once video connects, click "Ready" button
+6. Wait for admin to start the race (3-2-1-GO countdown)
+7. Use touch (mobile) or WASD/arrow keys (desktop)
 
 ### Controls
 
@@ -351,12 +358,39 @@ The token must use the same `TOKEN_SECRET` as configured on the Pi.
 | A / ←                      | Steer left  |
 | D / →                      | Steer right |
 
+### Admin Dashboard
+
+Access the admin dashboard at `/admin.html` (requires basic auth):
+
+| Feature          | Description                                             |
+| ---------------- | ------------------------------------------------------- |
+| ESP32 Status     | Shows if ESP32 is discovered on the network             |
+| Player Connected | Shows if a player has an active WebRTC connection       |
+| Video Feed       | Shows if player's video is connected                    |
+| Player Ready     | Shows if player clicked the Ready button                |
+| Throttle Limit   | Slider to set max throttle (10-50%), click Set to apply |
+| Start Race       | Starts 3-2-1-GO countdown, then enables controls        |
+| Stop             | Immediately stops race and disables controls            |
+| Kick             | Disconnects player and revokes their token              |
+| Token Generator  | Create new access tokens (15 min to 24 hours)           |
+
+**Race Flow:**
+
+1. Player connects and video starts
+2. Player clicks "Ready" button
+3. Admin clicks "Start Race" (enabled when player ready)
+4. 3-2-1-GO countdown (controls blocked)
+5. Race starts (controls enabled, timer starts)
+6. Admin clicks "Stop" when race ends
+
 ## Safety Features
 
-- **Throttle limits** - Forward 25%, reverse 20% (configurable in ESP32 code)
+- **Throttle limits** - Admin-adjustable 10-50%, ESP32 hard limit 50% forward / 30% reverse
 - **Auto-neutral** - Car stops if connection lost (80ms hold, then neutral)
 - **Slew rate limiting** - Prevents sudden jerky movements
 - **Token expiration** - Tokens expire automatically
+- **Token revocation** - Admin can kick players and revoke their tokens
+- **Race state control** - Controls blocked until admin starts race
 
 ## Troubleshooting
 
@@ -388,11 +422,15 @@ The token must use the same `TOKEN_SECRET` as configured on the Pi.
 
 ### Binary Protocol
 
-| Command | Code | Payload                   | Description           |
-| ------- | ---- | ------------------------- | --------------------- |
-| PING    | 0x00 | timestamp(4)              | Latency measurement   |
-| CTRL    | 0x01 | throttle(2) + steering(2) | Control values ±32767 |
-| PONG    | 0x02 | timestamp(4)              | Latency response      |
+| Command | Code | Payload                   | Description                      |
+| ------- | ---- | ------------------------- | -------------------------------- |
+| PING    | 0x00 | timestamp(4)              | Latency measurement              |
+| CTRL    | 0x01 | throttle(2) + steering(2) | Control values ±32767            |
+| PONG    | 0x02 | timestamp(4)              | Latency response                 |
+| RACE    | 0x03 | sub-cmd(1)                | Race start/stop commands         |
+| STATUS  | 0x04 | sub-cmd(1) + value(1)     | Browser→Pi status (video, ready) |
+| CONFIG  | 0x05 | type(1) + value(4)        | Pi→Browser config (throttle)     |
+| KICK    | 0x06 | -                         | Pi→Browser: kicked notification  |
 
 Packet format: `seq(uint16 LE) + cmd(uint8) + payload`
 

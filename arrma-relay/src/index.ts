@@ -5,6 +5,7 @@
  * - Serves static assets (control UI)
  * - Provides TURN credentials for WebRTC
  * - Protects admin page with basic auth
+ * - Generates access tokens for players
  *
  * Control flow is now:
  * Browser → WebRTC DataChannel → Pi → UDP → ESP32
@@ -13,6 +14,7 @@
  * - TURN_KEY_ID: Cloudflare TURN key ID
  * - TURN_KEY_API_TOKEN: Cloudflare TURN API token
  * - ADMIN_PASSWORD: Password for admin page (basic auth)
+ * - TOKEN_SECRET: Secret for generating access tokens
  */
 
 interface Env {
@@ -20,23 +22,24 @@ interface Env {
 	TURN_KEY_ID: string;
 	TURN_KEY_API_TOKEN: string;
 	ADMIN_PASSWORD: string;
+	TOKEN_SECRET: string;
 }
 
 // Basic auth check for admin pages
 function checkBasicAuth(request: Request, env: Env): Response | null {
 	const authHeader = request.headers.get('Authorization');
-	
+
 	if (!authHeader || !authHeader.startsWith('Basic ')) {
 		return new Response('Unauthorized', {
 			status: 401,
 			headers: { 'WWW-Authenticate': 'Basic realm="Admin Area"' },
 		});
 	}
-	
+
 	const base64Credentials = authHeader.slice(6);
 	const credentials = atob(base64Credentials);
 	const [username, password] = credentials.split(':');
-	
+
 	// Username can be anything, just check password
 	if (password !== env.ADMIN_PASSWORD) {
 		return new Response('Unauthorized', {
@@ -44,7 +47,7 @@ function checkBasicAuth(request: Request, env: Env): Response | null {
 			headers: { 'WWW-Authenticate': 'Basic realm="Admin Area"' },
 		});
 	}
-	
+
 	return null; // Auth passed
 }
 
@@ -76,24 +79,64 @@ async function generateTurnCredentials(env: Env): Promise<Response> {
 	});
 }
 
+// Generate access token for players (HMAC-SHA256 signed)
+async function generateAccessToken(env: Env, durationMinutes: number): Promise<Response> {
+	if (!env.TOKEN_SECRET) {
+		return new Response(JSON.stringify({ error: 'TOKEN_SECRET not configured' }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+
+	const expiryTime = Math.floor(Date.now() / 1000) + durationMinutes * 60;
+	const expiryHex = expiryTime.toString(16).padStart(8, '0');
+
+	// Use Web Crypto API for HMAC-SHA256
+	const encoder = new TextEncoder();
+	const keyData = encoder.encode(env.TOKEN_SECRET);
+	const key = await crypto.subtle.importKey('raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+
+	const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(expiryHex));
+	const signatureHex = Array.from(new Uint8Array(signature))
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('')
+		.substring(0, 16);
+
+	const token = `${expiryHex}${signatureHex}`;
+	const expiresAt = new Date(expiryTime * 1000).toISOString();
+
+	return new Response(JSON.stringify({ token, expiresAt, durationMinutes }), {
+		headers: { 'Content-Type': 'application/json' },
+	});
+}
+
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
+		const pathname = url.pathname;
 
-		// Protect admin page with basic auth
-		if (url.pathname === '/admin.html' || url.pathname === '/admin') {
-			if (env.ADMIN_PASSWORD) {
-				const authError = checkBasicAuth(request, env);
-				if (authError) return authError;
+		// Protect admin pages and API with basic auth
+		if (pathname === '/admin.html' || pathname === '/admin' || pathname === '/admin/' || pathname === '/admin/generate-token') {
+			// Require ADMIN_PASSWORD to be set
+			if (!env.ADMIN_PASSWORD) {
+				return new Response('Admin password not configured', { status: 500 });
 			}
-			// Serve admin.html for both /admin and /admin.html
-			if (url.pathname === '/admin') {
-				return env.ASSETS.fetch(new Request(new URL('/admin.html', request.url), request));
+			const authError = checkBasicAuth(request, env);
+			if (authError) return authError;
+
+			// Token generation endpoint
+			if (pathname === '/admin/generate-token' && request.method === 'POST') {
+				const body = await request.json().catch(() => ({}));
+				const durationMinutes = (body as { minutes?: number }).minutes || 60;
+				return generateAccessToken(env, durationMinutes);
 			}
+
+			// After auth, pass through to assets (don't rewrite URL to avoid redirect loop)
+			return env.ASSETS.fetch(request);
 		}
 
 		// TURN credentials endpoint (for video WebRTC)
-		if (url.pathname === '/turn-credentials') {
+		if (pathname === '/turn-credentials') {
 			return generateTurnCredentials(env);
 		}
 
