@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Tether Rally - Admin</title>
+		<style>
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+			body {
+				font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+				background: #1a1a2e;
+				color: #eee;
+				min-height: 100vh;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				padding: 40px 20px;
+			}
+			h1 {
+				font-size: 24px;
+				font-weight: 300;
+				color: #888;
+				margin-bottom: 30px;
+			}
+			.status-card {
+				background: #16213e;
+				border-radius: 12px;
+				padding: 20px;
+				margin-bottom: 20px;
+				width: 100%;
+				max-width: 400px;
+			}
+			.status-row {
+				display: flex;
+				justify-content: space-between;
+				padding: 8px 0;
+				border-bottom: 1px solid #2a2a4a;
+			}
+			.status-row:last-child {
+				border-bottom: none;
+			}
+			.status-label {
+				color: #888;
+			}
+			.status-value {
+				font-weight: 600;
+			}
+			.status-value.online {
+				color: #40916c;
+			}
+			.status-value.offline {
+				color: #e63946;
+			}
+			.btn {
+				padding: 16px 40px;
+				font-size: 18px;
+				border: none;
+				border-radius: 12px;
+				cursor: pointer;
+				font-weight: 600;
+				margin: 10px;
+				min-width: 200px;
+			}
+			.btn-start {
+				background: #40916c;
+				color: white;
+			}
+			.btn-start:hover {
+				background: #52b788;
+			}
+			.btn-start:disabled {
+				background: #3a3a5a;
+				cursor: not-allowed;
+			}
+			.btn-stop {
+				background: #e63946;
+				color: white;
+			}
+			.btn-stop:hover {
+				background: #ff6b6b;
+			}
+			.race-time {
+				font-size: 48px;
+				font-weight: 700;
+				font-family: monospace;
+				margin: 30px 0;
+				color: #40916c;
+			}
+			.message {
+				margin-top: 20px;
+				padding: 12px 20px;
+				border-radius: 8px;
+				background: #2a2a4a;
+			}
+			.message.success {
+				background: #2d6a4f;
+			}
+			.message.error {
+				background: #9d0208;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>🏎️ Race Admin</h1>
+
+		<div class="status-card">
+			<div class="status-row">
+				<span class="status-label">ESP32</span>
+				<span id="esp32-status" class="status-value offline">--</span>
+			</div>
+			<div class="status-row">
+				<span class="status-label">Player Connected</span>
+				<span id="player-status" class="status-value offline">No</span>
+			</div>
+		</div>
+
+		<div class="race-time" id="race-time">00:00.000</div>
+
+		<div>
+			<button class="btn btn-start" id="start-btn" onclick="startRace()">Start Race</button>
+			<button class="btn btn-stop" id="stop-btn" onclick="stopRace()">Stop</button>
+		</div>
+
+		<div id="message" class="message" style="display: none"></div>
+
+		<!-- Optional: Load config.js for deployment-specific URLs -->
+		<script src="config.js" onerror="console.log('No config.js found, using defaults')"></script>
+
+		<script>
+			// Control Relay URL (via Cloudflare Tunnel in production)
+			const CONTROL_URL = window.CONTROL_URL || '';
+
+			let raceStartTime = null;
+			let timerInterval = null;
+
+			async function updateStatus() {
+				try {
+					const res = await fetch(`${CONTROL_URL}/control/health`);
+					const data = await res.json();
+
+					document.getElementById('esp32-status').textContent = data.esp32_ip || 'Not found';
+					document.getElementById('esp32-status').className = 'status-value ' + (data.esp32_ip ? 'online' : 'offline');
+
+					document.getElementById('player-status').textContent = data.channel_open ? 'Yes' : 'No';
+					document.getElementById('player-status').className = 'status-value ' + (data.channel_open ? 'online' : 'offline');
+
+					document.getElementById('start-btn').disabled = !data.channel_open;
+				} catch (e) {
+					console.error('Status check failed:', e);
+				}
+			}
+
+			function showMessage(text, isError = false) {
+				const msg = document.getElementById('message');
+				msg.textContent = text;
+				msg.className = 'message ' + (isError ? 'error' : 'success');
+				msg.style.display = 'block';
+				setTimeout(() => (msg.style.display = 'none'), 3000);
+			}
+
+			function updateTimer() {
+				if (!raceStartTime) return;
+				const elapsed = Date.now() - raceStartTime;
+				const mins = Math.floor(elapsed / 60000);
+				const secs = Math.floor((elapsed % 60000) / 1000);
+				const ms = elapsed % 1000;
+				document.getElementById('race-time').textContent =
+					String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0') + '.' + String(ms).padStart(3, '0');
+			}
+
+			async function startRace() {
+				try {
+					const res = await fetch(`${CONTROL_URL}/admin/start-race`, { method: 'POST' });
+					const data = await res.json();
+
+					if (data.success) {
+						showMessage('Race countdown started!');
+						// Start timer after 3 second countdown
+						setTimeout(() => {
+							raceStartTime = Date.now();
+							timerInterval = setInterval(updateTimer, 50);
+						}, 3000);
+					} else {
+						showMessage(data.error || 'Failed to start race', true);
+					}
+				} catch (e) {
+					showMessage('Failed to start race: ' + e.message, true);
+				}
+			}
+
+			async function stopRace() {
+				if (timerInterval) {
+					clearInterval(timerInterval);
+					timerInterval = null;
+				}
+
+				try {
+					const res = await fetch(`${CONTROL_URL}/admin/stop-race`, { method: 'POST' });
+					showMessage('Race stopped');
+				} catch (e) {
+					console.error('Stop race error:', e);
+				}
+			}
+
+			// Update status every 2 seconds
+			updateStatus();
+			setInterval(updateStatus, 2000);
+		</script>
+	</body>
+</html>

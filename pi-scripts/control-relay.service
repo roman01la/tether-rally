@@ -1,0 +1,29 @@
+[Unit]
+Description=WebRTC DataChannel to UDP Control Relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi
+ExecStart=/usr/bin/python3 /home/pi/control-relay.py
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+# Load secrets from environment file (create /home/pi/.env with TOKEN_SECRET)
+EnvironmentFile=-/home/pi/.env
+
+# CPU priority for low-latency control
+Nice=-10
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=50
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=control-relay
+
+[Install]
+WantedBy=multi-user.target

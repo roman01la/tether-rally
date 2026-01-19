@@ -1,0 +1,15 @@
+/**
+ * ESP32 Configuration - COPY THIS TO config.h AND FILL IN YOUR VALUES
+ * 
+ * This file contains sensitive configuration that should not be committed.
+ * Copy to config.h and add config.h to .gitignore
+ */
+
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// WiFi credentials
+#define WIFI_SSID "your-wifi-ssid"
+#define WIFI_PASSWORD "your-wifi-password"
+
+#endif

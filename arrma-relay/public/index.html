@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+		<link rel="shortcut icon" href="/icon_xs.png" />
+		<title>Tether Rally</title>
+		<style>
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+			body {
+				font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+				background: #000;
+				color: #eee;
+				height: 100vh;
+				width: 100vw;
+				touch-action: none;
+				user-select: none;
+				overflow: hidden;
+			}
+			/* Login screen */
+			#login-screen {
+				position: absolute;
+				inset: 0;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				justify-content: center;
+				gap: 20px;
+				background: #1a1a2e;
+				z-index: 100;
+			}
+			#login-screen.hidden {
+				display: none;
+			}
+			#login-screen h1 {
+				font-size: 24px;
+				font-weight: 300;
+				color: #888;
+			}
+			#login-screen input {
+				padding: 12px 20px;
+				font-size: 16px;
+				border: 2px solid #3a3a5a;
+				border-radius: 10px;
+				background: #16213e;
+				color: #eee;
+				width: 280px;
+				text-align: center;
+				font-family: monospace;
+			}
+			#login-screen input:focus {
+				outline: none;
+				border-color: #6a6a9a;
+			}
+			#login-screen button {
+				padding: 12px 40px;
+				font-size: 16px;
+				border: none;
+				border-radius: 10px;
+				background: #2d6a4f;
+				color: #eee;
+				cursor: pointer;
+				font-weight: 600;
+			}
+			#login-screen button:hover {
+				background: #40916c;
+			}
+			#login-screen button:disabled {
+				background: #3a3a5a;
+				cursor: not-allowed;
+			}
+			#login-error {
+				color: #e63946;
+				font-size: 14px;
+				min-height: 20px;
+			}
+			#device-status {
+				font-size: 12px;
+				color: #666;
+				margin-top: -10px;
+			}
+			#device-status.online {
+				color: #40916c;
+			}
+
+			/* Control screen - racing game style */
+			#control-screen {
+				position: absolute;
+				inset: 0;
+				display: none;
+			}
+			#control-screen.active {
+				display: block;
+			}
+
+			/* Video background */
+			#video-container {
+				position: absolute;
+				inset: 0;
+				background: #111;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+			}
+			#video-container video {
+				position: absolute;
+				width: 100%;
+				height: 100%;
+				object-fit: cover;
+			}
+			#video-placeholder {
+				color: #555;
+				font-size: 14px;
+				text-transform: uppercase;
+				letter-spacing: 3px;
+				z-index: 1;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: 15px;
+			}
+			#video-placeholder .spinner {
+				width: 30px;
+				height: 30px;
+				border: 3px solid rgba(255, 255, 255, 0.1);
+				border-top-color: rgba(255, 255, 255, 0.5);
+				border-radius: 50%;
+				animation: spin 1s linear infinite;
+			}
+			@keyframes spin {
+				to {
+					transform: rotate(360deg);
+				}
+			}
+			#video-placeholder .spinner.hidden {
+				display: none;
+			}
+
+			/* Controls disabled overlay */
+			.control-zone.disabled {
+				opacity: 0.3;
+				pointer-events: none;
+			}
+
+			/* HUD overlay */
+			#hud {
+				position: absolute;
+				top: 0;
+				left: 0;
+				right: 0;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				padding: 15px;
+				gap: 20px;
+				background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), transparent);
+				pointer-events: none;
+			}
+			#status {
+				padding: 6px 14px;
+				border-radius: 20px;
+				font-size: 12px;
+				font-weight: 600;
+			}
+			#status.connected {
+				background: rgba(45, 106, 79, 0.9);
+			}
+			#status.disconnected {
+				background: rgba(157, 2, 8, 0.9);
+			}
+			#status.connecting {
+				background: rgba(232, 93, 4, 0.9);
+			}
+			#status.waiting {
+				background: rgba(100, 100, 120, 0.9);
+			}
+			#values {
+				font-size: 12px;
+				color: rgba(255, 255, 255, 0.6);
+				font-family: monospace;
+			}
+			#latency {
+				font-size: 12px;
+				color: rgba(255, 255, 255, 0.6);
+				font-family: monospace;
+			}
+
+			/* Video stats overlay */
+			#video-stats {
+				position: absolute;
+				bottom: 10px;
+				left: 50%;
+				transform: translateX(-50%);
+				background: rgba(0, 0, 0, 0.6);
+				padding: 6px 12px;
+				border-radius: 4px;
+				font-size: 11px;
+				font-family: monospace;
+				color: rgba(255, 255, 255, 0.7);
+				pointer-events: none;
+				z-index: 10;
+			}
+
+			/* Control zones - positioned at bottom sides */
+			.control-zone {
+				position: absolute;
+				bottom: 20px;
+				width: 140px;
+				height: 200px;
+				background: rgba(30, 30, 50, 0.5);
+				border-radius: 70px;
+				border: 2px solid rgba(100, 100, 140, 0.3);
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				backdrop-filter: blur(10px);
+				-webkit-backdrop-filter: blur(10px);
+			}
+			#throttle-zone {
+				left: 20px;
+			}
+			#steering-zone {
+				right: 20px;
+				width: 220px;
+				border-radius: 100px;
+			}
+			.control-zone .label {
+				position: absolute;
+				top: 12px;
+				font-size: 10px;
+				color: rgba(255, 255, 255, 0.3);
+				text-transform: uppercase;
+				letter-spacing: 2px;
+			}
+
+			/* Slider tracks */
+			.slider-track {
+				position: absolute;
+				background: rgba(60, 60, 90, 0.5);
+				border-radius: 8px;
+			}
+			#throttle-zone .slider-track {
+				width: 8px;
+				height: 120px;
+			}
+			#steering-zone .slider-track {
+				height: 8px;
+				width: 160px;
+			}
+
+			/* Thumbs */
+			.slider-thumb {
+				position: absolute;
+				background: radial-gradient(circle at 30% 30%, rgba(150, 150, 200, 0.9), rgba(100, 100, 160, 0.9));
+				border-radius: 50%;
+				box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+			}
+			#throttle-thumb {
+				width: 60px;
+				height: 60px;
+			}
+			#steering-thumb {
+				width: 60px;
+				height: 60px;
+			}
+
+			/* Touch indicator when active */
+			.control-zone.active {
+				border-color: rgba(150, 150, 200, 0.5);
+				background: rgba(40, 40, 70, 0.6);
+			}
+
+			#instructions {
+				position: absolute;
+				bottom: 240px;
+				left: 0;
+				right: 0;
+				text-align: center;
+				font-size: 11px;
+				color: rgba(255, 255, 255, 0.2);
+				pointer-events: none;
+			}
+
+			/* Countdown overlay */
+			#countdown-overlay {
+				position: absolute;
+				inset: 0;
+				display: none;
+				align-items: center;
+				justify-content: center;
+				background: rgba(0, 0, 0, 0.7);
+				z-index: 50;
+			}
+			#countdown-overlay.active {
+				display: flex;
+			}
+			#countdown-number {
+				font-size: 200px;
+				font-weight: 700;
+				color: #fff;
+				text-shadow: 0 0 60px rgba(255, 255, 255, 0.5);
+				animation: countdown-pulse 1s ease-out;
+			}
+			#countdown-number.go {
+				color: #40916c;
+				font-size: 120px;
+			}
+			@keyframes countdown-pulse {
+				0% {
+					transform: scale(1.5);
+					opacity: 0;
+				}
+				50% {
+					opacity: 1;
+				}
+				100% {
+					transform: scale(1);
+					opacity: 1;
+				}
+			}
+
+			/* Race timer in HUD */
+			#race-timer {
+				padding: 6px 14px;
+				border-radius: 20px;
+				font-size: 14px;
+				font-weight: 700;
+				font-family: monospace;
+				background: rgba(0, 0, 0, 0.5);
+				color: #40916c;
+				display: none;
+			}
+			#race-timer.active {
+				display: block;
+			}
+		</style>
+	</head>
+	<body>
+		<!-- Login Screen -->
+		<div id="login-screen">
+			<img src="logo.png" alt="Tether Rally" style="max-width: 340px; height: auto" />
+			<input type="text" id="token-input" placeholder="Enter access token" autocomplete="off" />
+			<div id="login-error"></div>
+			<div id="device-status">Checking device...</div>
+			<button id="connect-btn">Connect</button>
+		</div>
+
+		<!-- Control Screen - Racing Game Style -->
+		<div id="control-screen">
+			<!-- Video Background -->
+			<div id="video-container">
+				<video id="fpv-video" autoplay playsinline muted></video>
+				<div id="video-placeholder">
+					<div class="spinner"></div>
+					<span>Connecting video...</span>
+				</div>
+			</div>
+
+			<!-- HUD Overlay -->
+			<div id="hud">
+				<div id="status" class="disconnected">Disconnected</div>
+				<div id="race-timer">00:00.000</div>
+				<div id="values">T: 0.000 | S: 0.000</div>
+				<div id="latency">--ms</div>
+			</div>
+
+			<!-- Countdown Overlay -->
+			<div id="countdown-overlay">
+				<div id="countdown-number">3</div>
+			</div>
+
+			<!-- Video Stats -->
+			<div id="video-stats"></div>
+
+			<!-- Throttle (left side) -->
+			<div id="throttle-zone" class="control-zone disabled">
+				<div class="label">Throttle</div>
+				<div class="slider-track"></div>
+				<div id="throttle-thumb" class="slider-thumb"></div>
+			</div>
+
+			<!-- Steering (right side) -->
+			<div id="steering-zone" class="control-zone disabled">
+				<div class="label">Steering</div>
+				<div class="slider-track"></div>
+				<div id="steering-thumb" class="slider-thumb"></div>
+			</div>
+
+			<div id="instructions">WASD / Arrow keys</div>
+		</div>
+
+		<!-- Optional: Load config.js for deployment-specific URLs -->
+		<script src="config.js" onerror="console.log('No config.js found, using defaults')"></script>
+
+		<script>
+			// ===== CONFIGURATION =====
+			// These URLs should be configured for your deployment
+			// For development, set DEV=true and update local URLs
+			// For production, update the production URLs to match your domain
+			const DEV = false;
+
+			// Cloudflare Workers (static assets + TURN credentials)
+			// Production: Your worker URL (e.g., https://your-app.workers.dev)
+			const WORKER_URL = DEV ? 'http://localhost:8787' : window.WORKER_URL || window.location.origin;
+
+			// FPV Camera (MediaMTX WHEP via Cloudflare Tunnel)
+			// Production: Your camera tunnel URL (e.g., https://cam.yourdomain.com/cam/whep)
+			const CAMERA_WHEP_URL = DEV ? 'http://pi.local:8889/cam/whep' : window.CAMERA_WHEP_URL || '';
+
+			// Control Relay (WebRTC DataChannel signaling via Cloudflare Tunnel)
+			// Production: Your control tunnel URL (e.g., https://control.yourdomain.com)
+			const CONTROL_URL = DEV ? 'http://localhost:8890' : window.CONTROL_URL || '';
+			// =========================
+
+			const CMD_PING = 0x00;
+			const CMD_CTRL = 0x01;
+			const CMD_PONG = 0x02;
+			const CMD_RACE = 0x03;
+
+			// Race sub-commands
+			const RACE_START_COUNTDOWN = 0x01;
+			const RACE_STOP = 0x02;
+
+			const TOKEN_STORAGE_KEY = 'tether-rally-token';
+			let controlSeq = 0;
+
+			let controlPc = null;
+			let controlChannel = null;
+			let pingInterval = null;
+			let controlInterval = null;
+			let currentToken = null;
+			let thrSlider = 0;
+			let thr = 0;
+			let str = 0;
+			let latency = 0;
+			let isConnected = false;
+			let deviceOnline = false;
+			let videoConnected = false;
+			const keys = new Set();
+			const thrLimit = 1.0; // UI limit (ESP32 enforces actual safety limit)
+			const keyStep = 1.0;
+			const strStep = 1.0;
+
+			// Race state
+			let raceStartTime = null;
+			let raceTimerInterval = null;
+
+			// DOM elements
+			const loginScreen = document.getElementById('login-screen');
+			const controlScreen = document.getElementById('control-screen');
+			const tokenInput = document.getElementById('token-input');
+			const connectBtn = document.getElementById('connect-btn');
+			const loginError = document.getElementById('login-error');
+			const deviceStatusEl = document.getElementById('device-status');
+			const fpvVideo = document.getElementById('fpv-video');
+			const videoPlaceholder = document.getElementById('video-placeholder');
+			const statusEl = document.getElementById('status');
+			const valuesEl = document.getElementById('values');
+			const latencyEl = document.getElementById('latency');
+			const throttleZone = document.getElementById('throttle-zone');
+			const steeringZone = document.getElementById('steering-zone');
+			const throttleThumb = document.getElementById('throttle-thumb');
+			const steeringThumb = document.getElementById('steering-thumb');
+			const countdownOverlay = document.getElementById('countdown-overlay');
+			const countdownNumber = document.getElementById('countdown-number');
+			const raceTimerEl = document.getElementById('race-timer');
+
+			let throttleTouchId = null;
+			let steeringTouchId = null;
+			let throttleTouchOrigin = null;
+			let steeringTouchOrigin = null;
+			let mouseThrOrigin = null;
+			let mouseStrOrigin = null;
+
+			// Check device status from control relay health endpoint
+			async function checkDeviceStatus() {
+				try {
+					const res = await fetch(`${CONTROL_URL}/control/health`);
+					const data = await res.json();
+					deviceOnline = data.esp32_ip !== null;
+					deviceStatusEl.textContent = deviceOnline ? '🟢 Device online' : '🔴 Device offline';
+					deviceStatusEl.className = deviceOnline ? 'online' : '';
+				} catch (e) {
+					deviceStatusEl.textContent = '⚠️ Cannot reach relay';
+					deviceOnline = false;
+				}
+			}
+
+			// Check status on load and periodically
+			checkDeviceStatus();
+			setInterval(checkDeviceStatus, 5000);
+
+			function setStatus(state, text) {
+				statusEl.className = state;
+				statusEl.textContent = text;
+			}
+
+			function updateDisplay() {
+				valuesEl.textContent = `T: ${thr.toFixed(3)} | S: ${str.toFixed(3)}`;
+			}
+
+			function updateThumbs() {
+				const thrZoneRect = throttleZone.getBoundingClientRect();
+				const thrRange = (thrZoneRect.height - 80) / 2;
+				throttleThumb.style.left = '50%';
+				throttleThumb.style.top = `calc(50% - ${thrSlider * thrRange}px)`;
+				throttleThumb.style.transform = 'translate(-50%, -50%)';
+
+				const strZoneRect = steeringZone.getBoundingClientRect();
+				const strRange = (strZoneRect.width - 80) / 2;
+				steeringThumb.style.top = '50%';
+				steeringThumb.style.left = `calc(50% + ${str * strRange}px)`;
+				steeringThumb.style.transform = 'translate(-50%, -50%)';
+			}
+
+			function sendPing() {
+				if (controlChannel && controlChannel.readyState === 'open') {
+					// Packet: seq(2) + cmd(1) + timestamp(4) = 7 bytes
+					const buf = new ArrayBuffer(7);
+					const view = new DataView(buf);
+					controlSeq = (controlSeq + 1) & 0xffff;
+					view.setUint16(0, controlSeq, true);
+					view.setUint8(2, CMD_PING);
+					view.setUint32(3, performance.now() & 0xffffffff, true);
+					controlChannel.send(buf);
+				}
+			}
+
+			function sendControl() {
+				if (controlChannel && controlChannel.readyState === 'open') {
+					// Packet: seq(2) + cmd(1) + thr(2) + str(2) = 7 bytes
+					const buf = new ArrayBuffer(7);
+					const view = new DataView(buf);
+					controlSeq = (controlSeq + 1) & 0xffff;
+					view.setUint16(0, controlSeq, true);
+					view.setUint8(2, CMD_CTRL);
+					view.setInt16(3, Math.round(thr * 32767), true);
+					view.setInt16(5, Math.round(str * 32767), true);
+					controlChannel.send(buf);
+				}
+				updateDisplay();
+				updateThumbs();
+			}
+
+			function showLoginScreen() {
+				loginScreen.classList.remove('hidden');
+				controlScreen.classList.remove('active');
+				connectBtn.disabled = false;
+				connectBtn.textContent = 'Connect';
+				stopFpvStream();
+				stopControlChannel();
+			}
+
+			function showControlScreen() {
+				loginScreen.classList.add('hidden');
+				controlScreen.classList.add('active');
+				startFpvStream();
+			}
+
+			// ===== WebRTC FPV Stream =====
+			let fpvPeerConnection = null;
+			let cachedIceServers = null;
+
+			async function getIceServers() {
+				// Use cached credentials if available and not expired
+				if (cachedIceServers) {
+					return cachedIceServers;
+				}
+
+				try {
+					const response = await fetch(`${WORKER_URL}/turn-credentials`);
+					if (response.ok) {
+						const data = await response.json();
+						cachedIceServers = data.iceServers;
+						// Refresh credentials after 12 hours (they last 24h)
+						setTimeout(() => {
+							cachedIceServers = null;
+						}, 12 * 60 * 60 * 1000);
+						console.log('Got Cloudflare TURN credentials');
+						return cachedIceServers;
+					}
+				} catch (err) {
+					console.warn('Failed to get TURN credentials, falling back to STUN only:', err);
+				}
+
+				// Fallback to STUN only (won't work through NAT)
+				return [{ urls: 'stun:stun.l.google.com:19302' }];
+			}
+
+			async function startFpvStream() {
+				if (fpvPeerConnection) {
+					stopFpvStream();
+				}
+
+				try {
+					const iceServers = await getIceServers();
+					fpvPeerConnection = new RTCPeerConnection({ iceServers });
+
+					fpvPeerConnection.ontrack = (event) => {
+						fpvVideo.srcObject = event.streams[0];
+						videoPlaceholder.style.display = 'none';
+						videoConnected = true;
+						throttleZone.classList.remove('disabled');
+						steeringZone.classList.remove('disabled');
+					};
+
+					fpvPeerConnection.oniceconnectionstatechange = () => {
+						const state = fpvPeerConnection.iceConnectionState;
+						console.log('FPV ICE state:', state);
+						if (state === 'disconnected' || state === 'failed') {
+							videoPlaceholder.innerHTML = '<div class="spinner"></div><span>FPV Disconnected - Reconnecting...</span>';
+							videoPlaceholder.style.display = 'flex';
+							videoConnected = false;
+							// Try to reconnect video after a short delay
+							setTimeout(() => {
+								if (
+									!fpvPeerConnection ||
+									fpvPeerConnection.iceConnectionState === 'disconnected' ||
+									fpvPeerConnection.iceConnectionState === 'failed'
+								) {
+									console.log('Reconnecting FPV stream...');
+									startFpvStream();
+								}
+							}, 3000);
+						}
+					};
+
+					// Add transceivers for receiving video/audio
+					fpvPeerConnection.addTransceiver('video', { direction: 'recvonly' });
+					fpvPeerConnection.addTransceiver('audio', { direction: 'recvonly' });
+
+					// Create offer
+					const offer = await fpvPeerConnection.createOffer();
+					await fpvPeerConnection.setLocalDescription(offer);
+
+					// Wait for ICE gathering with timeout (TURN gathering can be slow)
+					await new Promise((resolve) => {
+						if (fpvPeerConnection.iceGatheringState === 'complete') {
+							resolve();
+							return;
+						}
+
+						const timeout = setTimeout(() => {
+							console.log('ICE gathering timeout, proceeding with available candidates');
+							resolve();
+						}, 2000); // 2 second max wait
+
+						fpvPeerConnection.onicegatheringstatechange = () => {
+							if (fpvPeerConnection.iceGatheringState === 'complete') {
+								clearTimeout(timeout);
+								resolve();
+							}
+						};
+					});
+
+					// Send offer to MediaMTX WHEP endpoint
+					const response = await fetch(CAMERA_WHEP_URL, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/sdp' },
+						body: fpvPeerConnection.localDescription.sdp,
+					});
+
+					if (!response.ok) {
+						throw new Error(`WHEP error: ${response.status}`);
+					}
+
+					// Set remote description from answer
+					const answer = await response.text();
+					await fpvPeerConnection.setRemoteDescription({
+						type: 'answer',
+						sdp: answer,
+					});
+
+					console.log('Video stream connected');
+					startVideoStats();
+				} catch (err) {
+					console.error('Video stream error:', err);
+					videoPlaceholder.innerHTML = '<span>FPV Unavailable</span>';
+					videoPlaceholder.style.display = 'flex';
+				}
+			}
+
+			// Video stats tracking
+			let videoStatsInterval = null;
+			let lastBytesReceived = 0;
+			let lastStatsTime = 0;
+			const videoStatsEl = document.getElementById('video-stats');
+
+			async function updateVideoStats() {
+				if (!fpvPeerConnection) return;
+
+				try {
+					const stats = await fpvPeerConnection.getStats();
+					let fps = 0;
+					let bitrate = 0;
+					let videoLatency = 0;
+					let resolution = '';
+
+					stats.forEach((report) => {
+						if (report.type === 'inbound-rtp' && report.kind === 'video') {
+							// FPS
+							if (report.framesPerSecond) {
+								fps = Math.round(report.framesPerSecond);
+							}
+
+							// Resolution
+							if (report.frameWidth && report.frameHeight) {
+								resolution = `${report.frameWidth}x${report.frameHeight}`;
+							}
+
+							// Bitrate (calculated from bytes received)
+							const now = Date.now();
+							if (lastStatsTime > 0 && report.bytesReceived) {
+								const timeDelta = (now - lastStatsTime) / 1000;
+								const bytesDelta = report.bytesReceived - lastBytesReceived;
+								bitrate = Math.round((bytesDelta * 8) / timeDelta / 1000); // kbps
+							}
+							lastBytesReceived = report.bytesReceived || 0;
+							lastStatsTime = now;
+
+							// Jitter as proxy for latency variability
+							if (report.jitter) {
+								videoLatency = Math.round(report.jitter * 1000);
+							}
+						}
+
+						// RTT from candidate pair
+						if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+							if (report.currentRoundTripTime) {
+								videoLatency = Math.round(report.currentRoundTripTime * 1000);
+							}
+						}
+					});
+
+					// Update display
+					const parts = [];
+					if (resolution) parts.push(resolution);
+					if (fps > 0) parts.push(`${fps}fps`);
+					if (bitrate > 0) parts.push(`${bitrate}kbps`);
+					if (videoLatency > 0) parts.push(`${videoLatency}ms`);
+
+					videoStatsEl.textContent = parts.length > 0 ? parts.join(' • ') : '';
+				} catch (err) {
+					// Ignore stats errors
+				}
+			}
+
+			function startVideoStats() {
+				stopVideoStats();
+				lastBytesReceived = 0;
+				lastStatsTime = 0;
+				videoStatsInterval = setInterval(updateVideoStats, 1000);
+			}
+
+			function stopVideoStats() {
+				if (videoStatsInterval) {
+					clearInterval(videoStatsInterval);
+					videoStatsInterval = null;
+				}
+				videoStatsEl.textContent = '';
+			}
+
+			function stopFpvStream() {
+				stopVideoStats();
+				if (fpvPeerConnection) {
+					fpvPeerConnection.close();
+					fpvPeerConnection = null;
+				}
+				fpvVideo.srcObject = null;
+				videoConnected = false;
+				videoPlaceholder.innerHTML = '<div class="spinner"></div><span>Connecting video...</span>';
+				videoPlaceholder.style.display = 'flex';
+				throttleZone.classList.add('disabled');
+				steeringZone.classList.add('disabled');
+			}
+			// =============================
+
+			// ===== Race Countdown & Timer =====
+			function showCountdown() {
+				countdownOverlay.classList.add('active');
+				countdownNumber.textContent = '3';
+				countdownNumber.className = '';
+
+				setTimeout(() => {
+					countdownNumber.textContent = '2';
+					countdownNumber.style.animation = 'none';
+					countdownNumber.offsetHeight; // Trigger reflow
+					countdownNumber.style.animation = '';
+				}, 1000);
+
+				setTimeout(() => {
+					countdownNumber.textContent = '1';
+					countdownNumber.style.animation = 'none';
+					countdownNumber.offsetHeight; // Trigger reflow
+					countdownNumber.style.animation = '';
+				}, 2000);
+
+				setTimeout(() => {
+					countdownNumber.textContent = 'GO!';
+					countdownNumber.className = 'go';
+					countdownNumber.style.animation = 'none';
+					countdownNumber.offsetHeight; // Trigger reflow
+					countdownNumber.style.animation = '';
+				}, 3000);
+
+				setTimeout(() => {
+					countdownOverlay.classList.remove('active');
+					startRaceTimer();
+				}, 3500);
+			}
+
+			function startRaceTimer() {
+				raceStartTime = Date.now();
+				raceTimerEl.classList.add('active');
+
+				if (raceTimerInterval) clearInterval(raceTimerInterval);
+				raceTimerInterval = setInterval(updateRaceTimer, 50);
+			}
+
+			function updateRaceTimer() {
+				if (!raceStartTime) return;
+				const elapsed = Date.now() - raceStartTime;
+				const mins = Math.floor(elapsed / 60000);
+				const secs = Math.floor((elapsed % 60000) / 1000);
+				const ms = elapsed % 1000;
+				raceTimerEl.textContent = String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0') + '.' + String(ms).padStart(3, '0');
+			}
+
+			function stopRaceTimer() {
+				if (raceTimerInterval) {
+					clearInterval(raceTimerInterval);
+					raceTimerInterval = null;
+				}
+				raceStartTime = null;
+				raceTimerEl.classList.remove('active');
+			}
+
+			function handleRaceCommand(subCmd) {
+				console.log('Race command received:', subCmd);
+				switch (subCmd) {
+					case RACE_START_COUNTDOWN:
+						showCountdown();
+						break;
+					case RACE_STOP:
+						stopRaceTimer();
+						break;
+				}
+			}
+			// ==================================
+
+			// ===== WebRTC DataChannel for Controls =====
+			async function startControlChannel() {
+				const iceServers = await getIceServers();
+
+				controlPc = new RTCPeerConnection({ iceServers });
+
+				// Handle ICE connection state changes (including disconnection)
+				controlPc.oniceconnectionstatechange = () => {
+					console.log('Control ICE state:', controlPc.iceConnectionState);
+					const state = controlPc.iceConnectionState;
+
+					if (state === 'connected' || state === 'completed') {
+						// Log the selected candidate pair
+						controlPc.getStats().then((stats) => {
+							stats.forEach((report) => {
+								if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+									const localId = report.localCandidateId;
+									const remoteId = report.remoteCandidateId;
+									stats.forEach((r) => {
+										if (r.id === localId) console.log('Control local candidate:', r.candidateType, r.address);
+										if (r.id === remoteId) console.log('Control remote candidate:', r.candidateType, r.address);
+									});
+								}
+							});
+						});
+					} else if (state === 'disconnected') {
+						// Connection lost - update UI immediately
+						console.warn('Control connection lost');
+						isConnected = false;
+						setStatus('disconnected', 'Connection Lost');
+						throttleZone.classList.add('disabled');
+						steeringZone.classList.add('disabled');
+						// Give ICE a chance to recover
+						setTimeout(() => {
+							if (controlPc && controlPc.iceConnectionState === 'disconnected') {
+								console.log('ICE did not recover, reconnecting...');
+								reconnectControl();
+							}
+						}, 5000);
+					} else if (state === 'failed') {
+						// Connection failed - reconnect
+						console.error('Control connection failed');
+						isConnected = false;
+						setStatus('disconnected', 'Connection Failed');
+						throttleZone.classList.add('disabled');
+						steeringZone.classList.add('disabled');
+						reconnectControl();
+					}
+				};
+
+				// Create unreliable, unordered DataChannel (UDP-like behavior)
+				controlChannel = controlPc.createDataChannel('control', {
+					ordered: false,
+					maxRetransmits: 0,
+				});
+
+				controlChannel.binaryType = 'arraybuffer';
+
+				controlChannel.onopen = () => {
+					console.log('Control DataChannel open');
+					isConnected = true;
+					setStatus('connected', 'Connected');
+					throttleZone.classList.remove('disabled');
+					steeringZone.classList.remove('disabled');
+					// Start 50Hz control loop
+					controlInterval = setInterval(sendControl, 20);
+					// Start ping for latency measurement
+					pingInterval = setInterval(sendPing, 500);
+				};
+
+				controlChannel.onclose = () => {
+					console.log('Control DataChannel closed');
+					isConnected = false;
+					clearInterval(controlInterval);
+					clearInterval(pingInterval);
+					setStatus('disconnected', 'Disconnected');
+					throttleZone.classList.add('disabled');
+					steeringZone.classList.add('disabled');
+				};
+
+				controlChannel.onerror = (err) => {
+					console.error('DataChannel error:', err);
+				};
+
+				controlChannel.onmessage = (event) => {
+					// Packet format: seq(2) + cmd(1) + payload...
+					if (event.data instanceof ArrayBuffer) {
+						const view = new DataView(event.data);
+						if (view.byteLength >= 3) {
+							const cmd = view.getUint8(2);
+
+							// Handle PONG for latency measurement
+							// Payload: timestamp(4) = total 7 bytes
+							if (cmd === CMD_PONG && view.byteLength >= 7) {
+								const sentTime = view.getUint32(3, true);
+								const now = performance.now() & 0xffffffff;
+								let rtt = now - sentTime;
+								if (rtt < 0) rtt += 0x100000000;
+								latency = latency === 0 ? rtt : latency * 0.9 + rtt * 0.1;
+								latencyEl.textContent = `${Math.round(latency)}ms`;
+							}
+							// Handle race commands from admin
+							// Payload: sub_cmd(1) = total 4 bytes
+							else if (cmd === CMD_RACE && view.byteLength >= 4) {
+								const subCmd = view.getUint8(3);
+								handleRaceCommand(subCmd);
+							}
+						}
+					}
+				};
+
+				// Create offer
+				const offer = await controlPc.createOffer();
+				await controlPc.setLocalDescription(offer);
+
+				// Wait for ICE gathering (with timeout)
+				await new Promise((resolve) => {
+					if (controlPc.iceGatheringState === 'complete') {
+						resolve();
+						return;
+					}
+					const timeout = setTimeout(() => {
+						console.log('ICE gathering timeout, proceeding');
+						resolve();
+					}, 2000);
+					controlPc.onicegatheringstatechange = () => {
+						if (controlPc.iceGatheringState === 'complete') {
+							clearTimeout(timeout);
+							resolve();
+						}
+					};
+				});
+
+				// Send offer to Pi relay
+				const response = await fetch(`${CONTROL_URL}/control/offer?token=${encodeURIComponent(currentToken)}`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/sdp' },
+					body: controlPc.localDescription.sdp,
+				});
+
+				if (!response.ok) {
+					const text = await response.text();
+					throw new Error(text || `Signaling error: ${response.status}`);
+				}
+
+				const answerSdp = await response.text();
+				await controlPc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+				console.log('Control channel signaling complete');
+			}
+
+			function stopControlChannel() {
+				clearInterval(controlInterval);
+				clearInterval(pingInterval);
+				if (controlChannel) {
+					controlChannel.close();
+					controlChannel = null;
+				}
+				if (controlPc) {
+					controlPc.close();
+					controlPc = null;
+				}
+				isConnected = false;
+			}
+
+			// Reconnect control channel after connection loss
+			let reconnectAttempt = 0;
+			const MAX_RECONNECT_DELAY = 30000;
+
+			async function reconnectControl() {
+				stopControlChannel();
+
+				// Exponential backoff: 1s, 2s, 4s, 8s... max 30s
+				const delay = Math.min(1000 * Math.pow(2, reconnectAttempt), MAX_RECONNECT_DELAY);
+				reconnectAttempt++;
+
+				console.log(`Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempt})...`);
+				setStatus('connecting', `Reconnecting (${reconnectAttempt})...`);
+
+				await new Promise((r) => setTimeout(r, delay));
+
+				// Check if device is reachable before attempting reconnect
+				try {
+					const res = await fetch(`${CONTROL_URL}/control/health`, { signal: AbortSignal.timeout(5000) });
+					if (!res.ok) throw new Error('Health check failed');
+				} catch (e) {
+					console.log('Relay not reachable, retrying...');
+					reconnectControl();
+					return;
+				}
+
+				try {
+					await startControlChannel();
+					reconnectAttempt = 0; // Reset on success
+					console.log('Reconnected successfully');
+				} catch (err) {
+					console.error('Reconnect failed:', err);
+					reconnectControl();
+				}
+			}
+			// ============================================
+
+			async function connect(savedToken = null) {
+				const token = savedToken || tokenInput.value.trim();
+				if (!token) {
+					loginError.textContent = 'Please enter a token';
+					return;
+				}
+
+				currentToken = token;
+				loginError.textContent = '';
+				connectBtn.disabled = true;
+				connectBtn.textContent = 'Connecting...';
+
+				try {
+					// Store token
+					localStorage.setItem(TOKEN_STORAGE_KEY, currentToken);
+
+					// Show control screen and start video
+					showControlScreen();
+
+					// Start control DataChannel
+					await startControlChannel();
+				} catch (err) {
+					console.error('Connection error:', err);
+					loginError.textContent = err.message || 'Connection failed';
+					localStorage.removeItem(TOKEN_STORAGE_KEY);
+					showLoginScreen();
+				}
+			}
+
+			// Login button click
+			connectBtn.addEventListener('click', () => connect());
+
+			// Allow Enter key to submit
+			tokenInput.addEventListener('keypress', (e) => {
+				if (e.key === 'Enter') connect();
+			});
+
+			// Auto-connect with saved token on page load
+			const savedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+			if (savedToken) {
+				tokenInput.value = savedToken;
+				// Small delay to let device status check complete
+				setTimeout(() => connect(savedToken), 500);
+			}
+
+			// Throttle touch handling (vertical) - relative to touch origin
+			function handleThrottleMove(clientY, origin) {
+				const rect = throttleZone.getBoundingClientRect();
+				const range = (rect.height - 80) / 2;
+				let dy = origin - clientY;
+				thrSlider = Math.max(-1, Math.min(1, dy / range));
+				thr = thrSlider * thrLimit;
+				sendControl();
+			}
+
+			// Steering touch handling (horizontal) - relative to touch origin
+			function handleSteeringMove(clientX, origin) {
+				const rect = steeringZone.getBoundingClientRect();
+				const range = (rect.width - 80) / 2;
+				let dx = clientX - origin;
+				str = Math.max(-1, Math.min(1, dx / range));
+				sendControl();
+			}
+
+			// Touch events
+			throttleZone.addEventListener('touchstart', (e) => {
+				if (throttleTouchId === null) {
+					const touch = e.changedTouches[0];
+					throttleTouchId = touch.identifier;
+					throttleTouchOrigin = touch.clientY;
+					throttleZone.classList.add('active');
+				}
+				e.preventDefault();
+			});
+
+			steeringZone.addEventListener('touchstart', (e) => {
+				if (steeringTouchId === null) {
+					const touch = e.changedTouches[0];
+					steeringTouchId = touch.identifier;
+					steeringTouchOrigin = touch.clientX;
+					steeringZone.classList.add('active');
+				}
+				e.preventDefault();
+			});
+
+			document.addEventListener('touchmove', (e) => {
+				for (const touch of e.changedTouches) {
+					if (touch.identifier === throttleTouchId) {
+						handleThrottleMove(touch.clientY, throttleTouchOrigin);
+					} else if (touch.identifier === steeringTouchId) {
+						handleSteeringMove(touch.clientX, steeringTouchOrigin);
+					}
+				}
+			});
+
+			document.addEventListener('touchend', (e) => {
+				for (const touch of e.changedTouches) {
+					if (touch.identifier === throttleTouchId) {
+						throttleTouchId = null;
+						throttleTouchOrigin = null;
+						throttleZone.classList.remove('active');
+						thrSlider = 0;
+						thr = 0;
+						sendControl();
+					} else if (touch.identifier === steeringTouchId) {
+						steeringTouchId = null;
+						steeringTouchOrigin = null;
+						steeringZone.classList.remove('active');
+						str = 0;
+						sendControl();
+					}
+				}
+			});
+
+			document.addEventListener('touchcancel', (e) => {
+				for (const touch of e.changedTouches) {
+					if (touch.identifier === throttleTouchId) {
+						throttleTouchId = null;
+						throttleTouchOrigin = null;
+						throttleZone.classList.remove('active');
+						thrSlider = 0;
+						thr = 0;
+						sendControl();
+					} else if (touch.identifier === steeringTouchId) {
+						steeringTouchId = null;
+						steeringTouchOrigin = null;
+						steeringZone.classList.remove('active');
+						str = 0;
+						sendControl();
+					}
+				}
+			});
+
+			// Mouse support for desktop testing
+			let mouseOnThrottle = false;
+			let mouseOnSteering = false;
+
+			throttleZone.addEventListener('mousedown', (e) => {
+				mouseOnThrottle = true;
+				mouseThrOrigin = e.clientY;
+				throttleZone.classList.add('active');
+				e.preventDefault();
+			});
+
+			steeringZone.addEventListener('mousedown', (e) => {
+				mouseOnSteering = true;
+				mouseStrOrigin = e.clientX;
+				steeringZone.classList.add('active');
+				e.preventDefault();
+			});
+
+			document.addEventListener('mousemove', (e) => {
+				if (mouseOnThrottle) handleThrottleMove(e.clientY, mouseThrOrigin);
+				if (mouseOnSteering) handleSteeringMove(e.clientX, mouseStrOrigin);
+			});
+
+			document.addEventListener('mouseup', () => {
+				if (mouseOnThrottle) {
+					mouseOnThrottle = false;
+					mouseThrOrigin = null;
+					throttleZone.classList.remove('active');
+					thrSlider = 0;
+					thr = 0;
+					sendControl();
+				}
+				if (mouseOnSteering) {
+					mouseOnSteering = false;
+					mouseStrOrigin = null;
+					steeringZone.classList.remove('active');
+					str = 0;
+					sendControl();
+				}
+			});
+
+			// Keyboard handling (WASD + Arrows)
+			function updateFromKeys() {
+				if (!isConnected) return;
+				thrSlider = (keys.has('w') || keys.has('arrowup') ? keyStep : 0) + (keys.has('s') || keys.has('arrowdown') ? -keyStep : 0);
+				thr = thrSlider * thrLimit;
+				str = (keys.has('d') || keys.has('arrowright') ? strStep : 0) + (keys.has('a') || keys.has('arrowleft') ? -strStep : 0);
+				sendControl();
+			}
+
+			window.addEventListener('keydown', (e) => {
+				const k = e.key.toLowerCase();
+				if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) {
+					keys.add(k);
+					updateFromKeys();
+					e.preventDefault();
+				}
+			});
+
+			window.addEventListener('keyup', (e) => {
+				const k = e.key.toLowerCase();
+				if (keys.has(k)) {
+					keys.delete(k);
+					updateFromKeys();
+					e.preventDefault();
+				}
+			});
+
+			window.addEventListener('blur', () => {
+				keys.clear();
+				thrSlider = 0;
+				thr = 0;
+				str = 0;
+				if (isConnected) sendControl();
+			});
+
+			// Handle tab visibility changes (covers mobile app switching, screen lock, etc.)
+			// Browsers throttle timers for hidden tabs, so send neutral immediately
+			document.addEventListener('visibilitychange', () => {
+				if (document.hidden) {
+					keys.clear();
+					thrSlider = 0;
+					thr = 0;
+					str = 0;
+					if (isConnected) sendControl();
+				}
+			});
+
+			// Initialize thumbs position
+			updateThumbs();
+		</script>
+	</body>
+</html>

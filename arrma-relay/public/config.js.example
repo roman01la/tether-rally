@@ -1,0 +1,18 @@
+/**
+ * Browser Configuration - COPY THIS TO config.js AND FILL IN YOUR VALUES
+ * 
+ * Include this file BEFORE the main index.html script tag to override defaults.
+ * Example: <script src="config.js"></script>
+ */
+
+// Your Cloudflare Worker URL (serves static assets and TURN credentials)
+// Example: 'https://your-app.workers.dev'
+window.WORKER_URL = '';
+
+// Your camera WHEP URL (MediaMTX via Cloudflare Tunnel)
+// Example: 'https://cam.yourdomain.com/cam/whep'
+window.CAMERA_WHEP_URL = '';
+
+// Your control relay URL (Pi via Cloudflare Tunnel)
+// Example: 'https://control.yourdomain.com'
+window.CONTROL_URL = '';

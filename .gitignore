@@ -1,0 +1,12 @@
+# Images
+pics
+
+# Secrets and local configuration
+main/config.h
+arrma-relay/public/config.js
+.env
+.env.local
+*.local
+
+# Pi deployment secrets
+pi-scripts/.env
