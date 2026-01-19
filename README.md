@@ -469,3 +469,11 @@ Contributions welcome! Please read the [PLAN.md](PLAN.md) for architecture detai
 - [aiortc](https://github.com/aiortc/aiortc) - Python WebRTC
 - [MediaMTX](https://github.com/bluenviron/mediamtx) - Media streaming server
 - [Cloudflare](https://cloudflare.com) - TURN, Workers, and Tunnel services
+
+## Support
+
+If you find this project exciting, consider supporting my work with a small donation
+
+<a href="https://www.buymeacoffee.com/romanliutikov">
+<img src="https://www.buymeacoffee.com/assets/img/guidelines/download-assets-sm-1.svg" width="180" />
+</a>
