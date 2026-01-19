@@ -71,11 +71,20 @@ A web-based platform where users can remotely control a real RC car over the int
    - Fly.io hosted service (auto-scales to zero when idle)
    - Consumes WHEP video stream from car
    - Re-encodes to RTMP for YouTube Live
+   - **Live telemetry overlay** (race time, throttle, steering via FFmpeg drawtext)
+   - Telemetry received via separate WebRTC DataChannel from Pi
    - Admin dashboard controls (Go Live / Stop buttons)
    - Live indicator with status polling
    - Bearer token authentication for control endpoints
+   - Process exits on stop (Fly.io machine auto-stops)
 
-7. **Tournament System** 🔲 (Planned)
+7. **Local Recording on Pi** 🔲 (Future)
+
+   - High-quality 720p50 @ 8Mbps recording
+   - Telemetry logging to JSONL for offline rendering
+   - Post-processing scripts for telemetry overlay burn-in
+
+8. **Tournament System** 🔲 (Planned)
 
    - User registration and queue management
    - Timed race sessions
@@ -148,6 +157,7 @@ All secrets are externalized for open-source compatibility:
 | STATUS  | 0x04 | sub-cmd(1) + value(1)              | Browser→Pi: VIDEO=0x01, READY=0x02    |
 | CONFIG  | 0x05 | type(1) + value(4)                 | Pi→Browser: throttle limit            |
 | KICK    | 0x06 | -                                  | Pi→Browser: you have been kicked      |
+| TELEM   | 0x07 | race_time(4) + throttle(2) + steering(2) | Pi→Clients: telemetry broadcast (10Hz) |
 
 Packet format: `seq(uint16 LE) + cmd(uint8) + payload`
 

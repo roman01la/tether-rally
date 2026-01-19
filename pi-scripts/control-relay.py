@@ -57,6 +57,7 @@ CMD_RACE = 0x03  # Race commands (start countdown, etc.)
 CMD_STATUS = 0x04  # Browser -> Pi status updates
 CMD_CONFIG = 0x05  # Pi -> Browser config updates (throttle limit, etc.)
 CMD_KICK = 0x06    # Pi -> Browser: you have been kicked
+CMD_TELEM = 0x07   # Pi -> Clients: telemetry broadcast
 
 # Race sub-commands (sent as payload after CMD_RACE)
 RACE_START_COUNTDOWN = 0x01
@@ -72,11 +73,17 @@ STATUS_READY = 0x02
 udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_sock.setblocking(False)
 
-# Active peer connection
+# Active peer connections and data channels
 pc = None
-control_channel = None
+control_channel = None  # Primary browser control channel
+data_channels = []  # All connected data channels (for telemetry broadcast)
 video_connected = False  # Reported by browser
 player_ready = False     # Player clicked Ready button
+
+# Current telemetry state (updated by control messages)
+current_throttle = 0  # Last received throttle value
+current_steering = 0  # Last received steering value
+telemetry_task = None  # Asyncio task for telemetry broadcast
 
 # Race state: "idle" (controls blocked), "countdown" (controls blocked), "racing" (controls allowed)
 race_state = "idle"
@@ -124,6 +131,36 @@ def revoke_token(token: str):
             revoked_tokens = revoked_tokens[-10:]
         save_revoked_tokens()
         logger.info(f"Revoked token: {token[:8]}... (total: {len(revoked_tokens)})")
+
+# ----- Telemetry Broadcast -----
+
+def broadcast_telemetry():
+    """Broadcast telemetry to all connected data channels"""
+    global data_channels, race_state, race_start_time, current_throttle, current_steering
+    
+    # Calculate race time in milliseconds
+    if race_state == "racing" and race_start_time:
+        race_time_ms = int((time.time() - race_start_time) * 1000)
+    else:
+        race_time_ms = 0
+    
+    # Format: seq(2) + cmd(1) + race_time(4) + throttle(2) + steering(2) = 11 bytes
+    message = struct.pack('<HBIhh', 0, CMD_TELEM, race_time_ms, current_throttle, current_steering)
+    
+    # Send to all connected data channels
+    for channel in data_channels[:]:  # Copy list to avoid mutation during iteration
+        try:
+            if channel.readyState == "open":
+                channel.send(message)
+        except Exception as e:
+            logger.warning(f"Error sending telemetry: {e}")
+
+async def telemetry_broadcast_loop():
+    """Broadcast telemetry at 10Hz"""
+    while True:
+        if race_state == "racing":
+            broadcast_telemetry()
+        await asyncio.sleep(0.1)  # 10Hz
 
 # ----- Token Validation -----
 
@@ -264,9 +301,10 @@ async def handle_offer(request):
     
     @pc.on("datachannel")
     def on_datachannel(channel):
-        global control_channel
+        global control_channel, data_channels
         control_channel = channel
-        logger.info(f"DataChannel '{channel.label}' opened")
+        data_channels.append(channel)  # Track for telemetry broadcast
+        logger.info(f"DataChannel '{channel.label}' opened (total: {len(data_channels)})")
         
         # Send current config to new client
         send_config()
@@ -275,7 +313,7 @@ async def handle_offer(request):
         
         @channel.on("message")
         def on_message(message):
-            global race_state
+            global race_state, current_throttle, current_steering
             # New packet format: seq(2) + cmd(1) + payload
             if isinstance(message, bytes) and len(message) >= 3:
                 seq = struct.unpack('<H', message[0:2])[0]
@@ -285,6 +323,10 @@ async def handle_offer(request):
                     pong = message[0:2] + bytes([CMD_PONG]) + message[3:]  # Keep seq, change cmd to PONG
                     channel.send(pong)
                 elif cmd == CMD_CTRL:  # CTRL - forward to ESP32 only if racing
+                    # Update telemetry state (throttle/steering)
+                    if len(message) >= 7:
+                        current_throttle, current_steering = struct.unpack('<hh', message[3:7])
+                    
                     if race_state == "racing":
                         ctrl_count[0] += 1
                         forward_to_esp32(message)
@@ -303,8 +345,12 @@ async def handle_offer(request):
         
         @channel.on("close")
         def on_close():
-            global control_channel
-            control_channel = None
+            global control_channel, data_channels
+            if channel in data_channels:
+                data_channels.remove(channel)
+            if control_channel == channel:
+                control_channel = None
+            logger.info(f"DataChannel '{channel.label}' closed (remaining: {len(data_channels)})")
             logger.info(f"DataChannel '{channel.label}' closed")
     
     @pc.on("connectionstatechange")
@@ -354,6 +400,95 @@ async def handle_options(request):
             "Access-Control-Allow-Headers": "Content-Type",
         }
     )
+
+# ----- Telemetry Subscriber Endpoint -----
+
+# Track telemetry subscriber connections (separate from main control)
+telemetry_subscribers = []  # List of (pc, datachannel) tuples
+
+async def handle_telemetry_offer(request):
+    """Handle WebRTC signaling for telemetry subscribers (read-only, doesn't kick browser)"""
+    global telemetry_subscribers
+    
+    # Validate token
+    token = request.query.get('token', '')
+    if not validate_token(token):
+        logger.warning(f"Invalid token attempt for telemetry")
+        return web.Response(status=401, text='Invalid or expired token')
+    
+    logger.info("Telemetry subscriber connecting...")
+    
+    # Configure ICE servers (same as main connection)
+    ice_servers = []
+    if TURN_USERNAME and TURN_CREDENTIAL:
+        ice_servers.append(RTCIceServer(
+            urls=["turn:turn.cloudflare.com:3478?transport=udp"],
+            username=TURN_USERNAME,
+            credential=TURN_CREDENTIAL
+        ))
+    ice_servers.append(RTCIceServer(urls=["stun:stun.l.google.com:19302"]))
+    
+    config = RTCConfiguration(iceServers=ice_servers)
+    sub_pc = RTCPeerConnection(configuration=config)
+    sub_channel = None
+    
+    @sub_pc.on("datachannel")
+    def on_datachannel(channel):
+        nonlocal sub_channel
+        global data_channels
+        sub_channel = channel
+        data_channels.append(channel)  # Add to broadcast list
+        logger.info(f"Telemetry subscriber DataChannel '{channel.label}' opened (total subscribers: {len(data_channels)})")
+        
+        @channel.on("close")
+        def on_close():
+            global data_channels
+            if channel in data_channels:
+                data_channels.remove(channel)
+            logger.info(f"Telemetry subscriber DataChannel closed (remaining: {len(data_channels)})")
+    
+    @sub_pc.on("connectionstatechange")
+    async def on_connectionstatechange():
+        nonlocal sub_channel
+        logger.info(f"Telemetry subscriber connection state: {sub_pc.connectionState}")
+        if sub_pc.connectionState in ("failed", "closed", "disconnected"):
+            # Clean up this subscriber
+            if sub_channel and sub_channel in data_channels:
+                data_channels.remove(sub_channel)
+            # Remove from subscribers list
+            telemetry_subscribers[:] = [(p, c) for p, c in telemetry_subscribers if p != sub_pc]
+            if sub_pc.connectionState != "closed":
+                await sub_pc.close()
+    
+    # Parse offer
+    offer_sdp = await request.text()
+    offer = RTCSessionDescription(sdp=offer_sdp, type="offer")
+    await sub_pc.setRemoteDescription(offer)
+    
+    # Create answer
+    answer = await sub_pc.createAnswer()
+    await sub_pc.setLocalDescription(answer)
+    
+    # Wait for ICE gathering
+    logger.info("Telemetry subscriber: waiting for ICE gathering...")
+    while sub_pc.iceGatheringState != "complete":
+        await asyncio.sleep(0.1)
+    logger.info("Telemetry subscriber: ICE gathering complete")
+    
+    # Track this subscriber
+    telemetry_subscribers.append((sub_pc, sub_channel))
+    
+    return web.Response(
+        text=sub_pc.localDescription.sdp,
+        content_type="application/sdp",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        }
+    )
+
+# ----- Health Check -----
 
 async def handle_health(request):
     """Health check endpoint"""
@@ -426,6 +561,7 @@ async def handle_start_race(request):
     if send_race_command(RACE_START_COUNTDOWN):
         race_state = "countdown"
         logger.info("Race countdown started - controls disabled")
+        
         # Schedule transition to racing state after 3 seconds
         countdown_task = asyncio.create_task(countdown_to_racing())
         return web.json_response({"success": True}, headers=CORS_HEADERS)
@@ -516,6 +652,8 @@ async def handle_set_throttle(request):
 # ----- Main -----
 
 async def main():
+    global telemetry_task
+    
     # Load revoked tokens from file
     load_revoked_tokens()
     
@@ -525,11 +663,18 @@ async def main():
     # Start ESP32 beacon discovery
     asyncio.create_task(discover_esp32())
     
+    # Start telemetry broadcast loop (10Hz)
+    telemetry_task = asyncio.create_task(telemetry_broadcast_loop())
+    
     # Set up HTTP server for WebRTC signaling
     app = web.Application()
     app.router.add_post("/control/offer", handle_offer)
     app.router.add_options("/control/offer", handle_options)
     app.router.add_get("/control/health", handle_health)
+    
+    # Telemetry subscriber endpoint (for restreamer, doesn't kick browser)
+    app.router.add_post("/telemetry/offer", handle_telemetry_offer)
+    app.router.add_options("/telemetry/offer", handle_options)
     
     # Admin API routes (page served from Cloudflare)
     app.router.add_post("/admin/start-race", handle_start_race)
@@ -548,11 +693,12 @@ async def main():
     
     logger.info(f"Control relay listening on port {HTTP_PORT}")
     logger.info(f"Endpoints:")
-    logger.info(f"  POST /control/offer?token=... - WebRTC signaling")
-    logger.info(f"  GET  /control/health          - Health check")
-    logger.info(f"  POST /admin/start-race        - Start race countdown")
-    logger.info(f"  POST /admin/stop-race         - Stop race")
-    logger.info(f"  POST /admin/kick-player       - Kick player & revoke token")
+    logger.info(f"  POST /control/offer?token=...   - WebRTC signaling (browser)")
+    logger.info(f"  POST /telemetry/offer?token=... - Telemetry subscriber (restreamer)")
+    logger.info(f"  GET  /control/health            - Health check")
+    logger.info(f"  POST /admin/start-race          - Start race countdown")
+    logger.info(f"  POST /admin/stop-race           - Stop race")
+    logger.info(f"  POST /admin/kick-player         - Kick player & revoke token")
     
     # Keep running
     while True:

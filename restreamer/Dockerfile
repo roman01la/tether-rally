@@ -1,13 +1,15 @@
 FROM golang:1.21-alpine AS builder
 
 WORKDIR /build
-COPY go.mod main.go ./
+COPY go.mod go.sum* ./
+RUN go mod download 2>/dev/null || true
+COPY main.go ./
 RUN go build -o restreamer .
 
 FROM alpine:3.19
 
-# Install MediaMTX and FFmpeg
-RUN apk add --no-cache ffmpeg curl
+# Install MediaMTX, FFmpeg, and fonts for telemetry overlay
+RUN apk add --no-cache ffmpeg curl ttf-dejavu
 
 # Download MediaMTX (latest version with better WHEP client support)
 ARG MEDIAMTX_VERSION=1.15.6

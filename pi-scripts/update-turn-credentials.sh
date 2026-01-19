@@ -56,6 +56,7 @@ paths:
     rpiCameraHeight: 720
     rpiCameraFPS: 30
     rpiCameraBitrate: 2000000
+    rpiCameraCodec: hardwareH264
 EOF
 
 echo "Updated MediaMTX config"

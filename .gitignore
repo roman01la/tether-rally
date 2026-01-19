@@ -10,3 +10,4 @@ arrma-relay/public/config.js
 
 # Pi deployment secrets
 pi-scripts/.env
+pi-scripts/mediamtx.yml

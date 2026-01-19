@@ -23,6 +23,7 @@ Control a real RC car from anywhere in the world through your browser. This proj
 - **Adjustable throttle** - Admin can set 10-50% limit in real-time
 - **Player ready system** - Player must confirm ready before race starts
 - **YouTube Live streaming** - Stream to YouTube from admin dashboard (Fly.io restreamer)
+- **Live telemetry overlay** - Race time, throttle & steering displayed on YouTube stream
 
 ## How It Works
 
