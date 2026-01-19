@@ -22,6 +22,7 @@ Control a real RC car from anywhere in the world through your browser. This proj
 - **Race state machine** - Countdown → racing → stop flow
 - **Adjustable throttle** - Admin can set 10-50% limit in real-time
 - **Player ready system** - Player must confirm ready before race starts
+- **YouTube Live streaming** - Stream to YouTube from admin dashboard (Fly.io restreamer)
 
 ## How It Works
 
@@ -138,6 +139,11 @@ arrma-remote/
 │   ├── control-relay.service
 │   ├── deploy.sh          # Quick deploy to Pi
 │   └── .env.example       # Pi secrets template
+├── restreamer/
+│   ├── main.go            # YouTube restreamer (Go)
+│   ├── Dockerfile         # Fly.io container
+│   ├── fly.toml           # Fly.io config
+│   └── README.md          # Restreamer docs
 ├── generate-token.js      # Access token generator (CLI)
 ├── SETUP.md              # Configuration guide
 └── README.md             # This file
@@ -373,6 +379,7 @@ Access the admin dashboard at `/admin.html` (requires basic auth):
 | Stop             | Immediately stops race and disables controls            |
 | Kick             | Disconnects player and revokes their token              |
 | Token Generator  | Create new access tokens (15 min to 24 hours)           |
+| YouTube Stream   | Go Live / Stop buttons for YouTube Live streaming       |
 
 **Race Flow:**
 

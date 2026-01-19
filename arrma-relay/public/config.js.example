@@ -16,3 +16,7 @@ window.CAMERA_WHEP_URL = '';
 // Your control relay URL (Pi via Cloudflare Tunnel)
 // Example: 'https://control.yourdomain.com'
 window.CONTROL_URL = '';
+
+// YouTube Restreamer (Fly.io)
+window.RESTREAMER_URL = ''; // https://{app}.fly.dev
+window.RESTREAMER_SECRET = '';

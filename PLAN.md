@@ -64,8 +64,18 @@ A web-based platform where users can remotely control a real RC car over the int
    - Real-time race timer (mm:ss.ms format)
    - Player must click "Ready" after video connects before race can start
    - Video status reported from browser to Pi
+   - **YouTube Live streaming** (start/stop from admin dashboard)
 
-6. **Tournament System** 🔲 (Planned)
+6. **YouTube Restreamer** ✅ (Implemented)
+
+   - Fly.io hosted service (auto-scales to zero when idle)
+   - Consumes WHEP video stream from car
+   - Re-encodes to RTMP for YouTube Live
+   - Admin dashboard controls (Go Live / Stop buttons)
+   - Live indicator with status polling
+   - Bearer token authentication for control endpoints
+
+7. **Tournament System** 🔲 (Planned)
 
    - User registration and queue management
    - Timed race sessions
@@ -101,13 +111,19 @@ arrma-remote/
 │   │   └── config.js.example # Template for config.js
 │   ├── wrangler.jsonc      # Cloudflare Workers config
 │   └── package.json
-└── pi-scripts/
-    ├── control-relay.py    # WebRTC DataChannel → UDP relay + race management
-    ├── control-relay.service # systemd service for relay
-    ├── deploy.sh           # Quick deploy script to Pi
-    ├── .env                 # Pi secrets (gitignored, on Pi only)
-    ├── .env.example         # Template for Pi .env
-    └── update-turn-credentials.sh  # TURN credential refresh script
+├── pi-scripts/
+│   ├── control-relay.py    # WebRTC DataChannel → UDP relay + race management
+│   ├── control-relay.service # systemd service for relay
+│   ├── deploy.sh           # Quick deploy script to Pi
+│   ├── .env                 # Pi secrets (gitignored, on Pi only)
+│   ├── .env.example         # Template for Pi .env
+│   └── update-turn-credentials.sh  # TURN credential refresh script
+└── restreamer/
+    ├── main.go             # Go HTTP server for YouTube restreaming
+    ├── Dockerfile          # Multi-stage build (Go + MediaMTX + FFmpeg)
+    ├── fly.toml            # Fly.io deployment config
+    ├── go.mod              # Go module
+    └── README.md           # Restreamer documentation
 ```
 
 ### Secrets Management
@@ -722,6 +738,8 @@ This allows testing the core concept before building full tournament system.
 - [x] **Player "Ready" button (must click before admin can start race)**
 - [x] **Admin token generator (web UI)**
 - [x] **Deploy script for Pi (deploy.sh)**
+- [x] **YouTube restreamer on Fly.io (WHEP → RTMP)**
+- [x] **Admin YouTube streaming controls (Go Live / Stop)**
 
 ---
 

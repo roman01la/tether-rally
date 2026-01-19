@@ -97,6 +97,50 @@
 				background: #3a3a5a;
 				cursor: not-allowed;
 			}
+			.btn-youtube {
+				background: #ff0000;
+				color: white;
+				min-width: 120px;
+				padding: 12px 20px;
+				font-size: 14px;
+			}
+			.btn-youtube:hover {
+				background: #cc0000;
+			}
+			.btn-youtube:disabled {
+				background: #3a3a5a;
+				cursor: not-allowed;
+			}
+			.btn-youtube-stop {
+				background: #666;
+			}
+			.btn-youtube-stop:hover {
+				background: #888;
+			}
+			.youtube-status {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+			.live-indicator {
+				width: 12px;
+				height: 12px;
+				border-radius: 50%;
+				background: #666;
+			}
+			.live-indicator.live {
+				background: #ff0000;
+				animation: pulse 1s ease-in-out infinite;
+			}
+			@keyframes pulse {
+				0%,
+				100% {
+					opacity: 1;
+				}
+				50% {
+					opacity: 0.5;
+				}
+			}
 			.race-time {
 				font-size: 48px;
 				font-weight: 700;
@@ -247,7 +291,23 @@
 
 		<div id="message" class="message" style="display: none"></div>
 
-		<h2 class="section-title">🔑 Token Generator</h2>
+		<h2 class="section-title">� YouTube Stream</h2>
+
+		<div class="status-card">
+			<div class="status-row">
+				<span class="status-label">Stream Status</span>
+				<span class="youtube-status">
+					<span class="live-indicator" id="youtube-indicator"></span>
+					<span id="youtube-status">Offline</span>
+				</span>
+			</div>
+			<div class="status-row" style="justify-content: center; padding-top: 15px">
+				<button class="btn btn-youtube" id="youtube-start-btn" onclick="startYouTubeStream()">▶ Go Live</button>
+				<button class="btn btn-youtube btn-youtube-stop" id="youtube-stop-btn" onclick="stopYouTubeStream()" disabled>⏹ Stop</button>
+			</div>
+		</div>
+
+		<h2 class="section-title">�🔑 Token Generator</h2>
 
 		<div class="token-card">
 			<div class="token-row">
@@ -274,10 +334,87 @@
 			// Control Relay URL (via Cloudflare Tunnel in production)
 			const CONTROL_URL = window.CONTROL_URL || '';
 
+			// YouTube Restreamer (Fly.io)
+			const RESTREAMER_URL = window.RESTREAMER_URL || '';
+			const RESTREAMER_SECRET = window.RESTREAMER_SECRET || '';
+
 			let raceStartTime = null;
 			let timerInterval = null;
+			let youtubeStreaming = false;
 
 			let throttleInitialized = false; // Only set slider from server once on load
+
+			// ===== YouTube Streaming =====
+			async function updateYouTubeStatus() {
+				try {
+					const res = await fetch(`${RESTREAMER_URL}/status`);
+					const data = await res.json();
+					youtubeStreaming = data.streaming;
+
+					document.getElementById('youtube-status').textContent = data.streaming ? 'LIVE' : 'Offline';
+					document.getElementById('youtube-indicator').className = 'live-indicator' + (data.streaming ? ' live' : '');
+					document.getElementById('youtube-start-btn').disabled = data.streaming;
+					document.getElementById('youtube-stop-btn').disabled = !data.streaming;
+				} catch (e) {
+					document.getElementById('youtube-status').textContent = 'Error';
+					console.error('YouTube status error:', e);
+				}
+			}
+
+			async function startYouTubeStream() {
+				if (!RESTREAMER_SECRET) {
+					showMessage('RESTREAMER_SECRET not configured', true);
+					return;
+				}
+
+				document.getElementById('youtube-start-btn').disabled = true;
+				document.getElementById('youtube-status').textContent = 'Starting...';
+
+				try {
+					const res = await fetch(`${RESTREAMER_URL}/start`, {
+						method: 'POST',
+						headers: { Authorization: `Bearer ${RESTREAMER_SECRET}` },
+					});
+					const data = await res.json();
+
+					if (data.started) {
+						showMessage('YouTube stream started!');
+						setTimeout(updateYouTubeStatus, 2000);
+					} else {
+						showMessage(data.error || 'Failed to start stream', true);
+						updateYouTubeStatus();
+					}
+				} catch (e) {
+					showMessage('Failed to start YouTube stream: ' + e.message, true);
+					updateYouTubeStatus();
+				}
+			}
+
+			async function stopYouTubeStream() {
+				if (!RESTREAMER_SECRET) {
+					showMessage('RESTREAMER_SECRET not configured', true);
+					return;
+				}
+
+				document.getElementById('youtube-stop-btn').disabled = true;
+				document.getElementById('youtube-status').textContent = 'Stopping...';
+
+				try {
+					const res = await fetch(`${RESTREAMER_URL}/stop`, {
+						method: 'POST',
+						headers: { Authorization: `Bearer ${RESTREAMER_SECRET}` },
+					});
+					const data = await res.json();
+
+					if (data.stopped) {
+						showMessage('YouTube stream stopped');
+					}
+					setTimeout(updateYouTubeStatus, 1000);
+				} catch (e) {
+					showMessage('Failed to stop YouTube stream: ' + e.message, true);
+					updateYouTubeStatus();
+				}
+			}
 
 			async function updateStatus() {
 				try {
@@ -415,6 +552,10 @@
 			// Update status every 2 seconds
 			updateStatus();
 			setInterval(updateStatus, 2000);
+
+			// Update YouTube status every 5 seconds
+			updateYouTubeStatus();
+			setInterval(updateYouTubeStatus, 5000);
 
 			// ===== Token Generator =====
 			let currentToken = null;

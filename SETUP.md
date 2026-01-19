@@ -48,6 +48,10 @@ Edit `arrma-relay/public/config.js`:
 window.WORKER_URL = "https://your-app.workers.dev";
 window.CAMERA_WHEP_URL = "https://cam.yourdomain.com/cam/whep";
 window.CONTROL_URL = "https://control.yourdomain.com";
+
+// YouTube Restreamer (optional, for YouTube Live streaming)
+window.RESTREAMER_URL = "https://your-restreamer.fly.dev";
+window.RESTREAMER_SECRET = "your-restreamer-control-secret";
 ```
 
 ### 4. Raspberry Pi
@@ -87,6 +91,45 @@ TOKEN_SECRET="your-secret-key-here" node generate-token.js 60
 | TURN credentials | Wrangler secrets               | ✅ Not in repo |
 | Frontend URLs    | `arrma-relay/public/config.js` | ❌ Ignored     |
 | Token secret     | Pi `~/.env`                    | ✅ Not in repo |
+
+## YouTube Restreamer Setup (Optional)
+
+The restreamer allows streaming the car's video feed to YouTube Live. It runs on Fly.io and auto-scales to zero when not in use.
+
+### Deploy to Fly.io
+
+```bash
+cd restreamer
+
+# Create the app (first time only)
+fly launch --no-deploy --name your-restreamer-name
+
+# Set secrets
+fly secrets set CAM_WHEP_URL="https://cam.yourdomain.com/cam/whep"
+fly secrets set YOUTUBE_STREAM_KEY="your-youtube-stream-key"
+fly secrets set CONTROL_SECRET="$(openssl rand -hex 16)"
+
+# Deploy
+fly deploy
+
+# Get your control secret for config.js
+fly ssh console -C "printenv CONTROL_SECRET"
+```
+
+### Configuration
+
+| Secret             | Description                                |
+| ------------------ | ------------------------------------------ |
+| CAM_WHEP_URL       | Your camera's WHEP endpoint                |
+| YOUTUBE_STREAM_KEY | From YouTube Studio → Go Live → Stream key |
+| CONTROL_SECRET     | Random secret for start/stop auth          |
+
+Add the restreamer URL and secret to `arrma-relay/public/config.js`:
+
+```javascript
+window.RESTREAMER_URL = "https://your-restreamer.fly.dev";
+window.RESTREAMER_SECRET = "your-control-secret";
+```
 
 ## Cloudflare Tunnel Setup
 
