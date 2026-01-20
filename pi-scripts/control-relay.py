@@ -405,6 +405,9 @@ async def handle_offer(request):
         # Send current config to new client
         send_config()
         
+        # Send current race state (for reconnection during race)
+        send_race_state()
+        
         ctrl_count = [0]  # Use list to allow mutation in nested function
         
         @channel.on("message")
@@ -645,6 +648,28 @@ def send_config():
     control_channel.send(message)
     logger.info(f"Sent config: throttle_limit={throttle_limit}")
     return True
+
+def send_race_state():
+    """Send current race state to browser (for reconnection)"""
+    global control_channel, race_state
+    
+    if control_channel is None or control_channel.readyState != "open":
+        return False
+    
+    # If race is in progress, tell the browser
+    if race_state == "racing":
+        # Send RACE_START_COUNTDOWN followed immediately by implicit "racing" 
+        # Actually, let's add a new sub-command for "already racing"
+        RACE_RESUME = 0x03  # New: resume into racing state immediately
+        message = struct.pack('<HBB', 0, CMD_RACE, RACE_RESUME)
+        control_channel.send(message)
+        logger.info("Sent race resume command")
+        return True
+    elif race_state == "countdown":
+        send_race_command(RACE_START_COUNTDOWN)
+        return True
+    
+    return False
 
 async def countdown_to_racing():
     """Wait 3 seconds then enable controls"""

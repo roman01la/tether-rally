@@ -14,6 +14,8 @@
 #include <WiFiUdp.h>
 #include <esp_wifi.h>
 #include <math.h>
+#include <Wire.h>
+#include <Adafruit_MCP4728.h>
 
 // Local configuration (copy config.h.example to config.h)
 #include "config.h"
@@ -28,18 +30,20 @@ const uint16_t UDP_PORT = 4210;    // Listen for commands
 const uint16_t BEACON_PORT = 4211; // Broadcast beacon
 const uint32_t BEACON_INTERVAL_MS = 1000;
 
-// DAC pins
-static const int PIN_THR_DAC = 25;
-static const int PIN_STR_DAC = 26;
+// MCP4728 external 12-bit DAC (I2C)
+static const int I2C_SDA = 21;
+static const int I2C_SCL = 22;
+static const uint8_t MCP4728_ADDR = 0x60;
+Adafruit_MCP4728 mcp;
 
-// Voltage calibration
-static const float THR_V_BACK = 1.20f;
-static const float THR_V_NEU = 1.69f;
-static const float THR_V_FWD = 2.82f;
+// Voltage calibration (symmetric ranges)
+static const float THR_V_BACK = 1.2f;
+static const float THR_V_NEU = 1.71f;
+static const float THR_V_FWD = 2.70f;
 
-static const float STR_V_RIGHT = 0.22f;
-static const float STR_V_CTR = 1.66f;
-static const float STR_V_LEFT = 3.05f;
+static const float STR_V_RIGHT = 0.35f;
+static const float STR_V_CTR = 1.71f;
+static const float STR_V_LEFT = 2.95f;
 
 static const float VREF = 3.30f;
 
@@ -95,15 +99,15 @@ static inline float clampf(float x, float lo, float hi)
   return x;
 }
 
-static inline int volts_to_dac(float v)
+static inline uint16_t volts_to_dac(float v)
 {
   v = clampf(v, 0.0f, VREF);
-  int code = (int)lroundf((v / VREF) * 255.0f);
+  int code = (int)lroundf((v / VREF) * 4095.0f); // 12-bit
   if (code < 0)
     code = 0;
-  if (code > 255)
-    code = 255;
-  return code;
+  if (code > 4095)
+    code = 4095;
+  return (uint16_t)code;
 }
 
 static float thr_norm_to_volts(float n)
@@ -128,8 +132,15 @@ static float str_norm_to_volts(float n)
 
 static void write_outputs(float thr_n, float str_n)
 {
-  dacWrite(PIN_THR_DAC, volts_to_dac(thr_norm_to_volts(thr_n)));
-  dacWrite(PIN_STR_DAC, volts_to_dac(str_norm_to_volts(str_n)));
+  float thr_v = thr_norm_to_volts(thr_n);
+  float str_v = str_norm_to_volts(str_n);
+  uint16_t str_code = volts_to_dac(str_v);
+  uint16_t thr_code = volts_to_dac(thr_v);
+
+  // Use VDD as reference (not internal 2.048V), gain=1x
+  // Channel A = throttle, Channel C = steering
+  mcp.setChannelValue(MCP4728_CHANNEL_A, thr_code, MCP4728_VREF_VDD, MCP4728_GAIN_1X);
+  mcp.setChannelValue(MCP4728_CHANNEL_C, str_code, MCP4728_VREF_VDD, MCP4728_GAIN_1X);
 }
 
 static void force_neutral()
@@ -186,6 +197,7 @@ void handlePacket(uint8_t *data, size_t len)
     else
       target_thr = clampf(thr_norm, -THR_BACK_LIMIT, 0.0f);
     target_str = clampf(str_norm, -STR_LIMIT, STR_LIMIT);
+
     last_cmd_ms = millis();
   }
   else if (cmd == CMD_PING && len >= 7)
@@ -245,15 +257,32 @@ void udpReceiveTask(void *parameter)
 
 // ----- Setup -----
 
+bool dac_found = false;
+
 void setup()
 {
   Serial.begin(115200);
   Serial.println("\n\nARRMA RC Controller (UDP/WebRTC DataChannel)");
 
-  // Set DAC pins to neutral
-  force_neutral();
+  // Try to initialize DAC (may not be powered yet)
+  Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.setClock(400000); // 400kHz I2C
 
-  // Connect to WiFi
+  if (mcp.begin(MCP4728_ADDR, &Wire))
+  {
+    dac_found = true;
+    Serial.println("MCP4728 DAC initialized.");
+    delay(10);
+    force_neutral();
+    delay(1);
+    force_neutral();
+  }
+  else
+  {
+    Serial.println("MCP4728 not found, will retry in loop...");
+  }
+
+  // Connect to WiFi (don't wait for DAC)
   Serial.print("Connecting to WiFi: ");
   Serial.println(ssid);
   WiFi.begin(ssid, password);
@@ -378,6 +407,33 @@ void loop()
     else
       out_str += (str_diff > 0 ? max_delta : -max_delta);
 
-    write_outputs(out_thr, out_str);
+    // Only write to DAC if found
+    if (dac_found)
+    {
+      write_outputs(out_thr, out_str);
+    }
   }
+
+  // Retry DAC connection if not found
+  static uint32_t last_dac_retry = 0;
+  if (!dac_found && now - last_dac_retry > 1000)
+  {
+    last_dac_retry = now;
+    Wire.end();
+    Wire.begin(I2C_SDA, I2C_SCL);
+    Wire.setClock(400000);
+    if (mcp.begin(MCP4728_ADDR, &Wire))
+    {
+      dac_found = true;
+      Serial.println("MCP4728 DAC found!");
+      force_neutral();
+    }
+    else
+    {
+      Serial.println("MCP4728 still not found...");
+    }
+  }
+
+  // Feed watchdog to prevent WDT reset
+  yield();
 }

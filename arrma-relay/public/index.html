@@ -1122,11 +1122,25 @@
 
 			function handleRaceCommand(subCmd) {
 				console.log('Race command received:', subCmd);
+				const RACE_RESUME = 0x03; // Reconnected during active race
 				switch (subCmd) {
 					case RACE_START_COUNTDOWN:
 						stoppedOverlay.classList.remove('active'); // Hide stopped overlay if visible
 						waitingOverlay.classList.remove('active'); // Hide waiting overlay
 						showCountdown();
+						break;
+					case RACE_RESUME:
+						// Reconnected during active race - enable controls immediately
+						console.log('Race resume - enabling controls');
+						stoppedOverlay.classList.remove('active');
+						waitingOverlay.classList.remove('active');
+						countdownOverlay.classList.remove('active');
+						// Start timer from 0 (we don't know the actual elapsed time)
+						raceStartTime = Date.now();
+						raceTimerEl.classList.add('active');
+						if (!raceTimerInterval) {
+							raceTimerInterval = setInterval(updateRaceTimer, 50);
+						}
 						break;
 					case RACE_STOP:
 						// Capture final time before stopping

@@ -9,6 +9,7 @@ Control a real RC car from anywhere in the world through your browser. This proj
 | ![Setup 1](imgs/1.jpg) | ![Setup 2](imgs/2.jpg) |
 | ![Setup 3](imgs/3.jpg) | ![Setup 4](imgs/4.jpg) |
 | ![Setup 5](imgs/5.jpg) | ![Setup 6](imgs/6.jpg) |
+| ![Setup 5](imgs/7.jpg) |                        |
 
 ## Features
 
@@ -16,7 +17,9 @@ Control a real RC car from anywhere in the world through your browser. This proj
 - **Live FPV video** - 720p @ 30fps H.264 streaming
 - **Touch & keyboard controls** - Works on mobile and desktop (smooth interpolation)
 - **Token-based access** - Secure, time-limited access tokens
-- **Auto-reconnect** - Handles connection drops gracefully
+- **Auto-reconnect** - Handles connection drops gracefully, resumes race state
+- **External 12-bit DAC** - MCP4728 for clean analog output (replaces noisy ESP32 DAC)
+- **Hot-plug DAC** - ESP32 connects to WiFi first, DAC can power on later
 - **Safety limits** - Throttle limits enforced on the car (not browser)
 - **Admin dashboard** - Race management, player monitoring, kick functionality
 - **Race state machine** - Countdown → racing → stop flow
@@ -37,6 +40,14 @@ Browser ──WebRTC──> Pi (on car) ──WiFi/UDP──> ESP32 (on transmit
                       └──WebRTC Video──> Browser
 ```
 
+**For ARRMA Big Rock (2-in-1 ESC/Receiver):**
+
+```
+Browser ──WebRTC──> Pi (on car) ──WiFi/UDP──> ESP32 ──I2C──> MCP4728 DAC ──Analog──> Transmitter ~~Radio~~> Car
+                      │
+                      └──WebRTC Video──> Browser
+```
+
 **For standard RC cars (direct control):**
 
 ```
@@ -48,22 +59,23 @@ Browser ──WebRTC──> Pi (on car) ──PWM──> Servo/ESC
 1. **Browser** sends control commands at 50Hz via WebRTC DataChannel
 2. **Cloudflare TURN** provides NAT traversal for P2P connection
 3. **Raspberry Pi** (mounted on car) relays commands and streams video
-4. **ESP32** (on transmitter, for ARRMA) generates analog voltages mimicking joystick input
-5. **Transmitter** sends radio signal to car's integrated receiver/ESC
+4. **ESP32** (on transmitter, for ARRMA) receives commands via WiFi/UDP
+5. **MCP4728 DAC** generates clean 12-bit analog voltages (0-3.3V)
+6. **Transmitter** reads DAC output as joystick input, sends radio to car
 
 ## Hardware Requirements
 
-### Architecture Note: Why ESP32 + Transmitter?
+### Architecture Note: Why ESP32 + External DAC + Transmitter?
 
 This project was specifically designed for **ARRMA Big Rock** (and similar ARRMA vehicles) with **2-in-1 ESC/Receiver modules**. These integrated units have no accessible input pins - the receiver is permanently coupled to the ESC with no way to inject control signals directly.
 
 **The workaround:**
 
 ```
-Internet → Pi (on car) → WiFi → ESP32 (on transmitter) → DAC voltages → Transmitter joystick inputs → Radio → Car receiver/ESC
+Internet → Pi (on car) → WiFi → ESP32 → MCP4728 DAC → Transmitter joystick inputs → Radio → Car receiver/ESC
 ```
 
-The ESP32 sits on the **transmitter** (not the car), generating analog voltages that mimic joystick movements. The transmitter then sends these as normal radio signals to the car.
+The ESP32 sits on the **transmitter** (not the car), controlling an external MCP4728 12-bit DAC via I2C. The DAC generates clean analog voltages that mimic joystick movements. We use an external DAC because the ESP32's internal 8-bit DAC is noisy and lower resolution.
 
 **For most other RC cars**, you can simplify this significantly:
 
@@ -88,11 +100,12 @@ This project can be adapted for direct Pi control by modifying `control-relay.py
 
 **On the Transmitter (ARRMA Big Rock setup):**
 
-| Component    | Purpose                     | Est. Cost |
-| ------------ | --------------------------- | --------- |
-| ESP32 DevKit | Generates joystick voltages | ~$10      |
+| Component    | Purpose                         | Est. Cost |
+| ------------ | ------------------------------- | --------- |
+| ESP32 DevKit | Receives UDP, controls DAC      | ~$10      |
+| MCP4728 DAC  | 12-bit I2C DAC (cleaner output) | ~$5       |
 
-**Total:** ~$60-75 (GPS optional)
+**Total:** ~$65-80 (GPS optional)
 
 ### RC Car Compatibility
 
@@ -104,18 +117,32 @@ This project can be adapted for direct Pi control by modifying `control-relay.py
 
 | Control  | Voltage Range                     | Neutral |
 | -------- | --------------------------------- | ------- |
-| Throttle | 1.20V (reverse) → 2.82V (forward) | ~1.69V  |
-| Steering | 0.22V (right) → 3.05V (left)      | ~1.66V  |
+| Throttle | 1.20V (reverse) → 2.70V (forward) | ~1.71V  |
+| Steering | 0.35V (right) → 2.95V (left)      | ~1.71V  |
 
-### Wiring (ESP32 to Transmitter)
+### Wiring
+
+**ESP32 to MCP4728 DAC:**
 
 ```
-ESP32 Pin 25 (DAC) ──> Transmitter Throttle Joystick Input
-ESP32 Pin 26 (DAC) ──> Transmitter Steering Joystick Input
-ESP32 GND         ──> Transmitter GND
+ESP32 GPIO 21 (SDA) ──> MCP4728 SDA
+ESP32 GPIO 22 (SCL) ──> MCP4728 SCL
+ESP32 3.3V          ──> MCP4728 VCC
+ESP32 GND           ──> MCP4728 GND
+MCP4728 LDAC        ──> GND (immediate output update)
 ```
 
-_Note: You'll need to identify the joystick potentiometer pins on your transmitter and tap into the wiper (middle) pin._
+**MCP4728 DAC to Transmitter:**
+
+```
+MCP4728 VoutA ──> Transmitter Throttle Joystick Wiper
+MCP4728 VoutC ──> Transmitter Steering Joystick Wiper
+MCP4728 GND   ──> Transmitter GND (common ground required!)
+```
+
+_Note: VoutA and VoutC are used. Connect to the joystick potentiometer wiper (middle) pins on your transmitter. The DAC is powered from ESP32 3.3V but outputs are compatible with transmitter's pot voltage range._
+
+**Required Library:** Install `Adafruit MCP4728` via Arduino Library Manager.
 
 ## Software Requirements
 
@@ -354,9 +381,9 @@ window.CONTROL_URL = "https://control.yourdomain.com";
 
 // Optional: Track map configuration (for GPS position overlay)
 window.TRACK_CONFIG = {
-  image: '/tracks/mytrack.png',  // Track image in public/tracks/
-  sw: { lat: -12.050, lon: -77.055 },  // Southwest corner GPS coords
-  ne: { lat: -12.045, lon: -77.050 }   // Northeast corner GPS coords
+  image: "/tracks/mytrack.png", // Track image in public/tracks/
+  sw: { lat: -12.05, lon: -77.055 }, // Southwest corner GPS coords
+  ne: { lat: -12.045, lon: -77.05 }, // Northeast corner GPS coords
 };
 ```
 

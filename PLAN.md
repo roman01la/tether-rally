@@ -13,12 +13,15 @@ A web-based platform where users can remotely control a real RC car over the int
    - Pi relay: DataChannel → UDP → ESP32
    - ESP32: Dual-core FreeRTOS (UDP on Core 0, Control on Core 1)
    - 200 Hz output loop with EMA smoothing + slew rate limiting
+   - **External 12-bit DAC (MCP4728)** for clean analog output (I2C)
+   - Hot-plug DAC support (ESP32 connects to WiFi first, retries DAC)
    - Touch controls (dual-zone: throttle left, steering right)
    - Keyboard controls (WASD / Arrow keys) with smooth interpolation
    - Configurable throttle limits (10-50% via admin, ESP32 hard limit 50%)
    - Safety limits enforced on ESP32 (not browser)
    - Latency measurement with EMA smoothing
    - **Auto-reconnect on connection loss** with exponential backoff
+   - **Race state sync on reconnect** (RACE_RESUME command)
    - **FPV auto-reconnect** when video stream drops
    - **GPS telemetry** (position, speed, heading) broadcast at 10Hz
 
@@ -151,13 +154,13 @@ All secrets are externalized for open-source compatibility:
 
 ### Binary Protocol
 
-| Command | Byte | Payload                            | Description                           |
-| ------- | ---- | ---------------------------------- | ------------------------------------- |
-| PING    | 0x00 | seq(2) + timestamp(4)              | Latency measurement                   |
-| CTRL    | 0x01 | seq(2) + throttle(2) + steering(2) | Control values (-32767 to 32767)      |
-| PONG    | 0x02 | timestamp(4)                       | Response to PING (from ESP32)         |
-| RACE    | 0x03 | sub-cmd(1)                         | Race commands (START=0x01, STOP=0x02) |
-| STATUS  | 0x04 | sub-cmd(1) + value(1)              | Browser→Pi: VIDEO=0x01, READY=0x02    |
+| Command | Byte | Payload                            | Description                                        |
+| ------- | ---- | ---------------------------------- | -------------------------------------------------- |
+| PING    | 0x00 | seq(2) + timestamp(4)              | Latency measurement                                |
+| CTRL    | 0x01 | seq(2) + throttle(2) + steering(2) | Control values (-32767 to 32767)                   |
+| PONG    | 0x02 | timestamp(4)                       | Response to PING (from ESP32)                      |
+| RACE    | 0x03 | sub-cmd(1)                         | Race commands (START=0x01, STOP=0x02, RESUME=0x03) |
+| STATUS  | 0x04 | sub-cmd(1) + value(1)              | Browser→Pi: VIDEO=0x01, READY=0x02                 |
 | CONFIG  | 0x05 | type(1) + value(4)                 | Pi→Browser: throttle limit            |
 | KICK    | 0x06 | -                                  | Pi→Browser: you have been kicked      |
 | TELEM   | 0x07 | race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + heading(2) + fix(1) | Pi→Clients: telemetry + GPS (10Hz, 24 bytes) |
