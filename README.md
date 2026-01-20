@@ -24,6 +24,8 @@ Control a real RC car from anywhere in the world through your browser. This proj
 - **Player ready system** - Player must confirm ready before race starts
 - **YouTube Live streaming** - Stream to YouTube from admin dashboard (Fly.io restreamer)
 - **Live telemetry overlay** - Race time, throttle & steering displayed on YouTube stream
+- **GPS telemetry** - Real-time position, speed (km/h), and heading from GPS module
+- **Track map overlay** - Mini-map showing live car position on configurable track image
 
 ## How It Works
 
@@ -78,8 +80,11 @@ This project can be adapted for direct Pi control by modifying `control-relay.py
 | ------------------------- | ----------------------- | --------- |
 | Raspberry Pi Zero 2W      | Video streaming + relay | ~$15      |
 | Pi Camera Module 3 (Wide) | FPV camera              | ~$35      |
+| GPS Module (optional)     | Speed & position data   | ~$10      |
 
 **Power:** The ARRMA Big Rock ESC has 5V output pins (intended for cooling fans) that can power the Raspberry Pi directly. Connect to GPIO 5V and GND pins. For other setups, use a USB power bank (5V 2A+).
+
+**GPS Module (optional):** Any NMEA-compatible GPS module with serial output (e.g., NEO-6M, NEO-7M, BN-220). Connect TX to Pi GPIO 15 (RX), and power from Pi 3.3V/5V depending on module.
 
 **On the Transmitter (ARRMA Big Rock setup):**
 
@@ -87,7 +92,7 @@ This project can be adapted for direct Pi control by modifying `control-relay.py
 | ------------ | --------------------------- | --------- |
 | ESP32 DevKit | Generates joystick voltages | ~$10      |
 
-**Total:** ~$75
+**Total:** ~$60-75 (GPS optional)
 
 ### RC Car Compatibility
 
@@ -179,7 +184,7 @@ sudo apt update && sudo apt upgrade -y
 
 # Install Python dependencies
 sudo apt install -y python3-pip
-pip3 install aiortc aiohttp pyyaml
+pip3 install aiortc aiohttp pyyaml pyserial pynmea2
 
 # Install MediaMTX for video streaming
 wget https://github.com/bluenviron/mediamtx/releases/download/v1.5.1/mediamtx_v1.5.1_linux_arm64v8.tar.gz
@@ -249,6 +254,25 @@ sudo mv ~/control-relay.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now control-relay
 ```
+
+#### GPS Setup (Optional)
+
+If using a GPS module connected to the Pi's serial port:
+
+```bash
+# Disable serial console (frees up /dev/serial0 for GPS)
+sudo systemctl mask serial-getty@ttyS0.service
+
+# Create udev rule for serial port permissions
+echo 'KERNEL=="ttyS0", GROUP="dialout", MODE="0660"' | sudo tee /etc/udev/rules.d/99-serial-gps.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+
+# Restart control-relay to pick up GPS
+sudo systemctl restart control-relay
+```
+
+The GPS data will be available at `http://<pi-ip>:8890/control/health` and broadcast to connected clients via telemetry.
 
 #### Create Systemd Services
 
@@ -327,6 +351,13 @@ Edit `config.js`:
 window.WORKER_URL = "https://your-app.workers.dev";
 window.CAMERA_WHEP_URL = "https://cam.yourdomain.com/cam/whep";
 window.CONTROL_URL = "https://control.yourdomain.com";
+
+// Optional: Track map configuration (for GPS position overlay)
+window.TRACK_CONFIG = {
+  image: '/tracks/mytrack.png',  // Track image in public/tracks/
+  sw: { lat: -12.050, lon: -77.055 },  // Southwest corner GPS coords
+  ne: { lat: -12.045, lon: -77.050 }   // Northeast corner GPS coords
+};
 ```
 
 Redeploy:

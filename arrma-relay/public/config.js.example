@@ -18,5 +18,15 @@ window.CAMERA_WHEP_URL = '';
 window.CONTROL_URL = '';
 
 // YouTube Restreamer (Fly.io)
-window.RESTREAMER_URL = ''; // https://{app}.fly.dev
+// Example: 'https://your-app.fly.dev'
+window.RESTREAMER_URL = '';
 window.RESTREAMER_SECRET = '';
+
+// Track Map Configuration (optional)
+// Set this to show a mini-map with car position during races
+// The SW (southwest) and NE (northeast) corners define the GPS bounds of the track image
+// window.TRACK_CONFIG = {
+//   image: '/tracks/mytrack.png',  // Path to track image
+//   sw: { lat: 111, lon: 111 },  // Southwest corner GPS coords
+//   ne: { lat: 111, lon: 111 }   // Northeast corner GPS coords
+// };

@@ -8,7 +8,7 @@ A web-based platform where users can remotely control a real RC car over the int
 
 1. **Real-time RC Car Control** ✅ (Implemented)
 
-   - WebRTC DataChannel binary protocol (PING/CTRL/PONG/RACE/STATUS/CONFIG/KICK commands)
+   - WebRTC DataChannel binary protocol (PING/CTRL/PONG/RACE/STATUS/CONFIG/KICK/TELEM commands)
    - Direct P2P connection via Cloudflare TURN (10-15ms RTT)
    - Pi relay: DataChannel → UDP → ESP32
    - ESP32: Dual-core FreeRTOS (UDP on Core 0, Control on Core 1)
@@ -20,6 +20,7 @@ A web-based platform where users can remotely control a real RC car over the int
    - Latency measurement with EMA smoothing
    - **Auto-reconnect on connection loss** with exponential backoff
    - **FPV auto-reconnect** when video stream drops
+   - **GPS telemetry** (position, speed, heading) broadcast at 10Hz
 
 2. **Security & Access Control** ✅ (Implemented)
 
@@ -42,6 +43,8 @@ A web-based platform where users can remotely control a real RC car over the int
    - Loading spinner while video connecting
    - Active touch feedback
    - Mobile-optimized layout
+   - **Track map overlay** with live car position (GPS-based)
+   - **Speed display** in km/h from GPS
 
 4. **FPV Video Streaming** ✅ (Implemented)
 
@@ -157,7 +160,7 @@ All secrets are externalized for open-source compatibility:
 | STATUS  | 0x04 | sub-cmd(1) + value(1)              | Browser→Pi: VIDEO=0x01, READY=0x02    |
 | CONFIG  | 0x05 | type(1) + value(4)                 | Pi→Browser: throttle limit            |
 | KICK    | 0x06 | -                                  | Pi→Browser: you have been kicked      |
-| TELEM   | 0x07 | race_time(4) + throttle(2) + steering(2) | Pi→Clients: telemetry broadcast (10Hz) |
+| TELEM   | 0x07 | race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + heading(2) + fix(1) | Pi→Clients: telemetry + GPS (10Hz, 24 bytes) |
 
 Packet format: `seq(uint16 LE) + cmd(uint8) + payload`
 

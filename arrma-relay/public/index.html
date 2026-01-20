@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 	<head>
 		<meta charset="UTF-8" />
@@ -257,7 +257,9 @@
 				position: absolute;
 				background: radial-gradient(circle at 30% 30%, rgba(150, 150, 200, 0.9), rgba(100, 100, 160, 0.9));
 				border-radius: 50%;
-				box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+				box-shadow:
+					0 4px 20px rgba(0, 0, 0, 0.5),
+					inset 0 1px 0 rgba(255, 255, 255, 0.2);
 			}
 			#throttle-thumb {
 				width: 60px;
@@ -336,6 +338,61 @@
 			}
 			#race-timer.active {
 				display: block;
+			}
+
+			/* Track map overlay */
+			#track-map {
+				position: absolute;
+				top: 60px;
+				right: 15px;
+				max-width: 220px;
+				background: rgba(0, 0, 0, 0.6);
+				border-radius: 10px;
+				overflow: hidden;
+				pointer-events: none;
+				display: none;
+				z-index: 10;
+			}
+			#track-map.active {
+				display: block;
+			}
+			#track-map img {
+				display: block;
+				width: 100%;
+				height: auto;
+				opacity: 0.8;
+			}
+			#track-map .car-dot {
+				position: absolute;
+				width: 12px;
+				height: 12px;
+				background: #ff4444;
+				border: 2px solid #fff;
+				border-radius: 50%;
+				transform: translate(-50%, -50%);
+				box-shadow: 0 0 10px rgba(255, 68, 68, 0.8);
+				z-index: 1;
+			}
+			#track-map .no-fix {
+				position: absolute;
+				top: 50%;
+				left: 50%;
+				transform: translate(-50%, -50%);
+				font-size: 10px;
+				color: rgba(255, 255, 255, 0.5);
+				text-transform: uppercase;
+				letter-spacing: 1px;
+			}
+			#track-map .speed-display {
+				position: absolute;
+				bottom: 5px;
+				left: 50%;
+				transform: translateX(-50%);
+				font-size: 14px;
+				font-weight: 700;
+				font-family: monospace;
+				color: #fff;
+				text-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
 			}
 
 			/* Race stopped overlay */
@@ -479,6 +536,14 @@
 				<div id="latency">--ms</div>
 			</div>
 
+			<!-- Track Map Overlay -->
+			<div id="track-map">
+				<img id="track-image" src="" alt="Track" />
+				<div class="car-dot" id="car-dot"></div>
+				<div class="no-fix" id="no-gps-fix">No GPS</div>
+				<div class="speed-display" id="speed-display">0 km/h</div>
+			</div>
+
 			<!-- Countdown Overlay -->
 			<div id="countdown-overlay">
 				<div id="countdown-number">3</div>
@@ -551,6 +616,7 @@
 			const CMD_STATUS = 0x04;
 			const CMD_CONFIG = 0x05;
 			const CMD_KICK = 0x06; // Pi -> Browser: you have been kicked
+			const CMD_TELEM = 0x07; // Pi -> Browser: telemetry broadcast
 
 			// Race sub-commands
 			const RACE_START_COUNTDOWN = 0x01;
@@ -624,6 +690,23 @@
 			let raceStartTime = null;
 			let raceTimerInterval = null;
 
+			// GPS telemetry state
+			let gpsLat = 0;
+			let gpsLon = 0;
+			let gpsSpeed = 0;
+			let gpsHeading = 0;
+			let gpsFix = false;
+
+			// Track map configuration
+			// Set these for each track: two opposite corners (SW and NE)
+			let trackConfig = null;
+			// Example:
+			// trackConfig = {
+			//   image: '/tracks/mytrack.png',
+			//   sw: { lat: 1, lon: 1 },  // Southwest corner
+			//   ne: { lat: 1, lon: 1 }   // Northeast corner
+			// };
+
 			// DOM elements
 			const loginScreen = document.getElementById('login-screen');
 			const controlScreen = document.getElementById('control-screen');
@@ -670,6 +753,11 @@
 			// Check status on load and periodically
 			checkDeviceStatus();
 			setInterval(checkDeviceStatus, 5000);
+
+			// Load track config from window.TRACK_CONFIG if set in config.js
+			if (window.TRACK_CONFIG) {
+				setTrackConfig(window.TRACK_CONFIG);
+			}
 
 			function setStatus(state, text) {
 				statusEl.className = state;
@@ -761,9 +849,12 @@
 						const data = await response.json();
 						cachedIceServers = data.iceServers;
 						// Refresh credentials after 12 hours (they last 24h)
-						setTimeout(() => {
-							cachedIceServers = null;
-						}, 12 * 60 * 60 * 1000);
+						setTimeout(
+							() => {
+								cachedIceServers = null;
+							},
+							12 * 60 * 60 * 1000,
+						);
 						console.log('Got Cloudflare TURN credentials');
 						return cachedIceServers;
 					}
@@ -1092,6 +1183,81 @@
 				// Go back to login screen
 				showLoginScreen();
 			}
+
+			function handleTelemetry(view) {
+				// Parse telemetry packet
+				// Format: seq(2) + cmd(1) + race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + heading(2) + fix(1)
+				const raceTimeMs = view.getUint32(3, true);
+				// const telem_throttle = view.getInt16(7, true);  // Not used currently
+				// const telem_steering = view.getInt16(9, true);  // Not used currently
+				gpsLat = view.getInt32(11, true) / 1e7; // Scaled lat back to degrees
+				gpsLon = view.getInt32(15, true) / 1e7; // Scaled lon back to degrees
+				gpsSpeed = view.getUint16(19, true) / 100; // Scaled speed back to km/h
+				gpsHeading = view.getUint16(21, true) / 100; // Scaled heading back to degrees
+				gpsFix = view.getUint8(23) === 1;
+
+				// Update track map
+				updateTrackMap();
+			}
+
+			function updateTrackMap() {
+				const trackMap = document.getElementById('track-map');
+				const carDot = document.getElementById('car-dot');
+				const noGpsFix = document.getElementById('no-gps-fix');
+				const speedDisplay = document.getElementById('speed-display');
+
+				// Update speed display
+				speedDisplay.textContent = `${Math.round(gpsSpeed)} km/h`;
+
+				// Show/hide GPS fix indicator
+				if (!gpsFix) {
+					noGpsFix.style.display = 'block';
+					carDot.style.display = 'none';
+					return;
+				}
+
+				noGpsFix.style.display = 'none';
+				carDot.style.display = 'block';
+
+				// If no track config, can't position the dot
+				if (!trackConfig) {
+					return;
+				}
+
+				// Calculate position on map (0-100%)
+				// Map GPS coordinates to pixel position within the track bounds
+				const latRange = trackConfig.ne.lat - trackConfig.sw.lat;
+				const lonRange = trackConfig.ne.lon - trackConfig.sw.lon;
+
+				// Clamp to track bounds
+				const clampedLat = Math.max(trackConfig.sw.lat, Math.min(trackConfig.ne.lat, gpsLat));
+				const clampedLon = Math.max(trackConfig.sw.lon, Math.min(trackConfig.ne.lon, gpsLon));
+
+				// Calculate percentage position (0-100)
+				// X: longitude (left=0, right=100)
+				// Y: latitude (bottom=0, top=100, but CSS top is inverted)
+				const xPercent = ((clampedLon - trackConfig.sw.lon) / lonRange) * 100;
+				const yPercent = 100 - ((clampedLat - trackConfig.sw.lat) / latRange) * 100; // Invert for CSS
+
+				carDot.style.left = `${xPercent}%`;
+				carDot.style.top = `${yPercent}%`;
+			}
+
+			function setTrackConfig(config) {
+				// Set track configuration and show the map
+				// config = { image: '/tracks/mytrack.png', sw: {lat, lon}, ne: {lat, lon} }
+				trackConfig = config;
+				const trackMap = document.getElementById('track-map');
+				const trackImage = document.getElementById('track-image');
+
+				if (config) {
+					trackImage.src = config.image;
+					trackMap.classList.add('active');
+				} else {
+					trackMap.classList.remove('active');
+				}
+			}
+
 			// ==================================
 
 			// ===== WebRTC DataChannel for Controls =====
@@ -1211,6 +1377,11 @@
 							// Handle kick command
 							else if (cmd === CMD_KICK) {
 								handleKicked();
+							}
+							// Handle telemetry broadcast
+							// Payload: race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + heading(2) + fix(1) = 24 bytes total
+							else if (cmd === CMD_TELEM && view.byteLength >= 24) {
+								handleTelemetry(view);
 							}
 						}
 					}

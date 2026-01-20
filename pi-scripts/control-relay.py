@@ -8,7 +8,7 @@ forwards them to ESP32 via UDP on local network.
 Also provides an admin interface for race management.
 
 Dependencies:
-    pip3 install aiortc aiohttp
+    pip3 install aiortc aiohttp pyserial pynmea2
 
 Usage:
     TOKEN_SECRET="your-secret" python3 control-relay.py
@@ -22,6 +22,8 @@ import hashlib
 import time
 import logging
 import os
+import serial
+import pynmea2
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 
@@ -40,6 +42,10 @@ BEACON_PORT = 4211
 
 # Control relay HTTP port (exposed via Cloudflare Tunnel)
 HTTP_PORT = 8890
+
+# GPS configuration
+GPS_PORT = '/dev/serial0'
+GPS_BAUD = 9600  # Try 38400 if 9600 doesn't work
 
 # Token authentication (must match generate-token.js)
 # Set via environment variable: export TOKEN_SECRET="your-secret-key"
@@ -84,6 +90,14 @@ player_ready = False     # Player clicked Ready button
 current_throttle = 0  # Last received throttle value
 current_steering = 0  # Last received steering value
 telemetry_task = None  # Asyncio task for telemetry broadcast
+
+# GPS state
+gps_lat = 0.0       # Latitude in degrees
+gps_lon = 0.0       # Longitude in degrees  
+gps_speed = 0.0     # Speed in km/h
+gps_heading = 0.0   # Heading/track in degrees
+gps_fix = False     # Has valid GPS fix
+gps_task = None     # Asyncio task for GPS reading
 
 # Race state: "idle" (controls blocked), "countdown" (controls blocked), "racing" (controls allowed)
 race_state = "idle"
@@ -137,6 +151,7 @@ def revoke_token(token: str):
 def broadcast_telemetry():
     """Broadcast telemetry to all connected data channels"""
     global data_channels, race_state, race_start_time, current_throttle, current_steering
+    global gps_lat, gps_lon, gps_speed, gps_heading, gps_fix
     
     # Calculate race time in milliseconds
     if race_state == "racing" and race_start_time:
@@ -144,8 +159,21 @@ def broadcast_telemetry():
     else:
         race_time_ms = 0
     
-    # Format: seq(2) + cmd(1) + race_time(4) + throttle(2) + steering(2) = 11 bytes
-    message = struct.pack('<HBIhh', 0, CMD_TELEM, race_time_ms, current_throttle, current_steering)
+    # Scale GPS values for transmission:
+    # lat/lon: multiply by 1e7 to preserve 7 decimal places as int32
+    # speed: multiply by 100 to preserve 2 decimal places as int16 (max 655.35 km/h)
+    # heading: multiply by 100 to preserve 2 decimal places as uint16 (0-360.00)
+    lat_scaled = int(gps_lat * 1e7)
+    lon_scaled = int(gps_lon * 1e7)
+    speed_scaled = int(gps_speed * 100)
+    heading_scaled = int(gps_heading * 100)
+    
+    # Format: seq(2) + cmd(1) + race_time(4) + throttle(2) + steering(2) + 
+    #         lat(4) + lon(4) + speed(2) + heading(2) + fix(1) = 24 bytes
+    message = struct.pack('<HBIhh iiHHB', 
+        0, CMD_TELEM, race_time_ms, current_throttle, current_steering,
+        lat_scaled, lon_scaled, speed_scaled, heading_scaled, 1 if gps_fix else 0
+    )
     
     # Send to all connected data channels
     for channel in data_channels[:]:  # Copy list to avoid mutation during iteration
@@ -154,6 +182,74 @@ def broadcast_telemetry():
                 channel.send(message)
         except Exception as e:
             logger.warning(f"Error sending telemetry: {e}")
+
+
+async def gps_reader_loop():
+    """Read GPS data from serial port in background"""
+    global gps_lat, gps_lon, gps_speed, gps_heading, gps_fix
+    
+    ser = None
+    while True:
+        try:
+            if ser is None:
+                ser = serial.Serial(GPS_PORT, GPS_BAUD, timeout=1)
+                logger.info(f"GPS serial port opened: {GPS_PORT} @ {GPS_BAUD}")
+            
+            # Read line (blocking, but with timeout)
+            line = await asyncio.get_event_loop().run_in_executor(None, ser.readline)
+            
+            if not line:
+                continue
+                
+            try:
+                line = line.decode('ascii', errors='ignore').strip()
+                if not line.startswith('$'):
+                    continue
+                    
+                msg = pynmea2.parse(line)
+                sentence_type = msg.sentence_type  # 'GGA', 'RMC', 'VTG', etc.
+                
+                # GGA - position fix (handles both $GPGGA and $GNGGA)
+                if sentence_type == 'GGA':
+                    if msg.latitude and msg.longitude:
+                        gps_lat = msg.latitude
+                        gps_lon = msg.longitude
+                        gps_fix = msg.gps_qual > 0
+                
+                # RMC - recommended minimum (has speed and heading)
+                elif sentence_type == 'RMC':
+                    if msg.status == 'A':  # Active/valid
+                        gps_fix = True
+                        if msg.latitude and msg.longitude:
+                            gps_lat = msg.latitude
+                            gps_lon = msg.longitude
+                        if msg.spd_over_grnd:
+                            # Convert knots to km/h
+                            gps_speed = msg.spd_over_grnd * 1.852
+                        if msg.true_course:
+                            gps_heading = msg.true_course
+                    else:
+                        gps_fix = False
+                
+                # VTG - track and speed
+                elif sentence_type == 'VTG':
+                    if hasattr(msg, 'spd_over_grnd_kmph') and msg.spd_over_grnd_kmph:
+                        gps_speed = msg.spd_over_grnd_kmph
+                    if hasattr(msg, 'true_track') and msg.true_track:
+                        gps_heading = msg.true_track
+                        
+            except pynmea2.ParseError:
+                pass  # Ignore malformed sentences
+                
+        except serial.SerialException as e:
+            logger.warning(f"GPS serial error: {e}, retrying in 5s...")
+            if ser:
+                ser.close()
+                ser = None
+            await asyncio.sleep(5)
+        except Exception as e:
+            logger.error(f"GPS error: {e}")
+            await asyncio.sleep(1)
 
 async def telemetry_broadcast_loop():
     """Broadcast telemetry at 10Hz"""
@@ -500,7 +596,14 @@ async def handle_health(request):
             "channel_open": control_channel is not None and control_channel.readyState == "open",
             "video_connected": video_connected,
             "player_ready": player_ready,
-            "throttle_limit": throttle_limit
+            "throttle_limit": throttle_limit,
+            "gps": {
+                "fix": gps_fix,
+                "lat": gps_lat,
+                "lon": gps_lon,
+                "speed_kmh": round(gps_speed, 2),
+                "heading": round(gps_heading, 1)
+            }
         },
         headers={"Access-Control-Allow-Origin": "*"}
     )
@@ -652,7 +755,7 @@ async def handle_set_throttle(request):
 # ----- Main -----
 
 async def main():
-    global telemetry_task
+    global telemetry_task, gps_task
     
     # Load revoked tokens from file
     load_revoked_tokens()
@@ -662,6 +765,9 @@ async def main():
     
     # Start ESP32 beacon discovery
     asyncio.create_task(discover_esp32())
+    
+    # Start GPS reader loop
+    gps_task = asyncio.create_task(gps_reader_loop())
     
     # Start telemetry broadcast loop (10Hz)
     telemetry_task = asyncio.create_task(telemetry_broadcast_loop())
