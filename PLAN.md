@@ -11,10 +11,12 @@ A web-based platform where users can remotely control a real RC car over the int
    - WebRTC DataChannel binary protocol (PING/CTRL/PONG/RACE/STATUS/CONFIG/KICK/TELEM commands)
    - Direct P2P connection via Cloudflare TURN (10-15ms RTT)
    - Pi relay: DataChannel → UDP → ESP32
-   - ESP32: Dual-core FreeRTOS (UDP on Core 0, Control on Core 1)
+   - ESP32: FreeRTOS task for UDP receive + 200 Hz control loop
+   - **Compatible with ESP32-WROOM and ESP32-C3 Super Mini** (single-core optimized)
    - 200 Hz output loop with EMA smoothing + slew rate limiting
    - **External 12-bit DAC (MCP4728)** for clean analog output (I2C)
    - Hot-plug DAC support (ESP32 connects to WiFi first, retries DAC)
+   - DAC write optimization (only writes on change, reduces I2C load)
    - Touch controls (dual-zone: throttle left, steering right)
    - Keyboard controls (WASD / Arrow keys) with smooth interpolation
    - Configurable throttle limits (10-50% via admin, ESP32 hard limit 50%)
@@ -189,7 +191,13 @@ Packet format: `seq(uint16 LE) + cmd(uint8) + payload`
 | Throttle | 1.20V (back) → 2.82V (fwd)   | 1.69V   |
 | Steering | 0.22V (right) → 3.05V (left) | 1.66V   |
 
-ESP32 DAC: Pin 25 (throttle), Pin 26 (steering)
+### I2C Pins (MCP4728 DAC)
+
+| Board             | SDA    | SCL    | Notes                              |
+| ----------------- | ------ | ------ | ---------------------------------- |
+| ESP32-WROOM       | GPIO21 | GPIO22 | Standard devkit pinout             |
+| ESP32-C3 Super Mini | GPIO8  | GPIO9  | Common C3 pinout (verify your board) |
+
 Note: Neutral voltages calibrated for ESP32 VDD ~3.12V (low TX batteries)
 
 ---

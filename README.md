@@ -18,6 +18,7 @@ Control a real RC car from anywhere in the world through your browser. This proj
 - **Touch & keyboard controls** - Works on mobile and desktop (smooth interpolation)
 - **Token-based access** - Secure, time-limited access tokens
 - **Auto-reconnect** - Handles connection drops gracefully, resumes race state
+- **ESP32-WROOM & ESP32-C3** - Compatible with both (C3 Super Mini for smaller builds)
 - **External 12-bit DAC** - MCP4728 for clean analog output (replaces noisy ESP32 DAC)
 - **Hot-plug DAC** - ESP32 connects to WiFi first, DAC can power on later
 - **Safety limits** - Throttle limits enforced on the car (not browser)
@@ -100,12 +101,14 @@ This project can be adapted for direct Pi control by modifying `control-relay.py
 
 **On the Transmitter (ARRMA Big Rock setup):**
 
-| Component    | Purpose                         | Est. Cost |
-| ------------ | ------------------------------- | --------- |
-| ESP32 DevKit | Receives UDP, controls DAC      | ~$10      |
-| MCP4728 DAC  | 12-bit I2C DAC (cleaner output) | ~$5       |
+| Component                  | Purpose                         | Est. Cost |
+| -------------------------- | ------------------------------- | --------- |
+| ESP32 DevKit **or** ESP32-C3 Super Mini | Receives UDP, controls DAC      | ~$5-10    |
+| MCP4728 DAC                | 12-bit I2C DAC (cleaner output) | ~$5       |
 
-**Total:** ~$65-80 (GPS optional)
+**ESP32-C3 Super Mini** is recommended for compact builds - it's smaller than a standard DevKit and works identically (single-core, but plenty fast for this use case).
+
+**Total:** ~$60-80 (GPS optional)
 
 ### RC Car Compatibility
 
@@ -125,12 +128,21 @@ This project can be adapted for direct Pi control by modifying `control-relay.py
 **ESP32 to MCP4728 DAC:**
 
 ```
+# ESP32-WROOM DevKit:
 ESP32 GPIO 21 (SDA) ──> MCP4728 SDA
 ESP32 GPIO 22 (SCL) ──> MCP4728 SCL
+
+# ESP32-C3 Super Mini:
+ESP32 GPIO 8 (SDA)  ──> MCP4728 SDA
+ESP32 GPIO 9 (SCL)  ──> MCP4728 SCL
+
+# Common to both:
 ESP32 3.3V          ──> MCP4728 VCC
 ESP32 GND           ──> MCP4728 GND
 MCP4728 LDAC        ──> GND (immediate output update)
 ```
+
+*Note: I2C pins vary by board. Run an I2C scanner sketch to verify the DAC is detected at address 0x60.*
 
 **MCP4728 DAC to Transmitter:**
 
@@ -192,8 +204,12 @@ arrma-remote/
    cp main/config.h.example main/config.h
    ```
 3. Edit `main/config.h` with your WiFi credentials
-4. Upload `main/main.ino` to your ESP32
-5. The ESP32 will broadcast a beacon on UDP port 4211
+4. **For ESP32-C3 Super Mini:** The code auto-uses GPIO 8/9 for I2C. Verify your board's pinout matches, or adjust `I2C_SDA`/`I2C_SCL` in `main.ino`
+5. Select the correct board in Arduino IDE:
+   - **ESP32-WROOM:** "ESP32 Dev Module"
+   - **ESP32-C3 Super Mini:** "ESP32C3 Dev Module"
+6. Upload `main/main.ino` to your ESP32
+7. The ESP32 will broadcast a beacon on UDP port 4211
 
 ### 2. Raspberry Pi Setup
 

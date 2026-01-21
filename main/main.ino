@@ -1,5 +1,6 @@
 /**
  * ESP32 RC Car Controller - UDP Version (WebRTC DataChannel)
+ * Compatible with ESP32-WROOM and ESP32-C3 Super Mini
  *
  * This version receives control commands via UDP from the Raspberry Pi,
  * which acts as a WebRTC DataChannel relay.
@@ -8,6 +9,11 @@
  * - Receives: seq(2) + cmd(1) + payload
  * - CMD_CTRL (0x01): thr(2) + str(2)
  * - Broadcasts beacon every second for Pi discovery
+ *
+ * ESP32-C3 Notes:
+ * - I2C pins: GPIO 8 (SDA), GPIO 9 (SCL) - adjust in config if needed
+ * - Single-core: uses xTaskCreate instead of xTaskCreatePinnedToCore
+ * - DAC writes optimized to reduce I2C burstiness
  */
 
 #include <WiFi.h>
@@ -31,8 +37,9 @@ const uint16_t BEACON_PORT = 4211; // Broadcast beacon
 const uint32_t BEACON_INTERVAL_MS = 1000;
 
 // MCP4728 external 12-bit DAC (I2C)
-static const int I2C_SDA = 21;
-static const int I2C_SCL = 22;
+// ESP32-C3 Super Mini: use GPIO 8/9 for I2C (not 21/22 like WROOM)
+static const int I2C_SDA = 8;
+static const int I2C_SCL = 9;
 static const uint8_t MCP4728_ADDR = 0x60;
 Adafruit_MCP4728 mcp;
 
@@ -83,6 +90,9 @@ bool in_hold_state = false; // For staged timeout
 
 // FreeRTOS task handle
 TaskHandle_t udpTaskHandle = NULL;
+
+// Critical section mutex for thread-safe volatile access (important on single-core C3)
+portMUX_TYPE targetMux = portMUX_INITIALIZER_UNLOCKED;
 
 // Track sender for PONG responses
 IPAddress lastSenderIP;
@@ -192,13 +202,19 @@ void handlePacket(uint8_t *data, size_t len)
 
     // Apply safety limits (ESP32 is the authority, not browser)
     // Asymmetric throttle: forward and backward have different limits
+    float new_thr, new_str;
     if (thr_norm >= 0.0f)
-      target_thr = clampf(thr_norm, 0.0f, THR_FWD_LIMIT);
+      new_thr = clampf(thr_norm, 0.0f, THR_FWD_LIMIT);
     else
-      target_thr = clampf(thr_norm, -THR_BACK_LIMIT, 0.0f);
-    target_str = clampf(str_norm, -STR_LIMIT, STR_LIMIT);
+      new_thr = clampf(thr_norm, -THR_BACK_LIMIT, 0.0f);
+    new_str = clampf(str_norm, -STR_LIMIT, STR_LIMIT);
 
+    // Thread-safe update (important on single-core C3)
+    portENTER_CRITICAL(&targetMux);
+    target_thr = new_thr;
+    target_str = new_str;
     last_cmd_ms = millis();
+    portEXIT_CRITICAL(&targetMux);
   }
   else if (cmd == CMD_PING && len >= 7)
   {
@@ -302,27 +318,27 @@ void setup()
     Serial.println(WiFi.localIP());
 
     // Disable WiFi power saving for lower latency
-    // Disable WiFi power saving for lower latency
     WiFi.setSleep(false);
-    esp_wifi_set_ps(WIFI_PS_NONE); // Extra: disable modem sleep
+#ifdef WIFI_PS_NONE
+    esp_wifi_set_ps(WIFI_PS_NONE); // Extra: disable modem sleep (may not exist on all cores)
+#endif
 
     // Start UDP listener
     udp.begin(UDP_PORT);
     Serial.print("UDP listening on port ");
     Serial.println(UDP_PORT);
 
-    // Create UDP receive task on Core 0 (WiFi core)
-    // Control loop stays on Core 1 (app core) in loop()
-    xTaskCreatePinnedToCore(
+    // Create UDP receive task
+    // Note: ESP32-C3 is single-core, so xTaskCreate is cleaner than xTaskCreatePinnedToCore
+    xTaskCreate(
         udpReceiveTask, // Task function
         "UDP_RX",       // Task name
         4096,           // Stack size
         NULL,           // Parameters
         2,              // Priority (higher than loop)
-        &udpTaskHandle, // Task handle
-        0               // Core 0 (WiFi core)
+        &udpTaskHandle  // Task handle
     );
-    Serial.println("UDP task created on Core 0");
+    Serial.println("UDP task created");
 
     // Send initial beacon
     sendBeacon();
@@ -352,15 +368,28 @@ void loop()
 
   // UDP receive is now handled by udpReceiveTask on Core 0
 
+  // Thread-safe read of shared state
+  float local_thr, local_str;
+  uint32_t local_last_cmd;
+  portENTER_CRITICAL(&targetMux);
+  local_thr = target_thr;
+  local_str = target_str;
+  local_last_cmd = last_cmd_ms;
+  portEXIT_CRITICAL(&targetMux);
+
   // Staged failsafe timeout
-  uint32_t time_since_cmd = now - last_cmd_ms;
-  if (last_cmd_ms > 0)
+  uint32_t time_since_cmd = now - local_last_cmd;
+  if (local_last_cmd > 0)
   {
     if (time_since_cmd > TIMEOUT_NEUTRAL_MS)
     {
       // Stage 2: Go neutral after 250ms
+      local_thr = 0.0f;
+      local_str = 0.0f;
+      portENTER_CRITICAL(&targetMux);
       target_thr = 0.0f;
       target_str = 0.0f;
+      portEXIT_CRITICAL(&targetMux);
       firstPacket = true; // Reset seq tracking
       in_hold_state = false;
     }
@@ -389,8 +418,9 @@ void loop()
     last_loop_ms = now;
 
     // Step 1: EMA filter on targets (smooths network jitter)
-    filtered_thr += EMA_ALPHA * (target_thr - filtered_thr);
-    filtered_str += EMA_ALPHA * (target_str - filtered_str);
+    // Use local copies read above for thread safety
+    filtered_thr += EMA_ALPHA * (local_thr - filtered_thr);
+    filtered_str += EMA_ALPHA * (local_str - filtered_str);
 
     // Step 2: Slew rate limit (prevents sudden jumps)
     float max_delta = SLEW_PER_SEC * dt;
@@ -407,10 +437,17 @@ void loop()
     else
       out_str += (str_diff > 0 ? max_delta : -max_delta);
 
-    // Only write to DAC if found
+    // Only write to DAC if found and output changed meaningfully
+    // This reduces I2C burstiness on single-core C3
+    static float last_written_thr = 999.0f, last_written_str = 999.0f;
     if (dac_found)
     {
-      write_outputs(out_thr, out_str);
+      if (fabsf(out_thr - last_written_thr) > 0.002f || fabsf(out_str - last_written_str) > 0.002f)
+      {
+        write_outputs(out_thr, out_str);
+        last_written_thr = out_thr;
+        last_written_str = out_str;
+      }
     }
   }
 
