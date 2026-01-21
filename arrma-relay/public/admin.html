@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 	<head>
 		<meta charset="UTF-8" />
@@ -15,9 +15,6 @@
 				background: #1a1a2e;
 				color: #eee;
 				min-height: 100vh;
-				display: flex;
-				flex-direction: column;
-				align-items: center;
 				padding: 40px 20px;
 			}
 			h1 {
@@ -25,6 +22,25 @@
 				font-weight: 300;
 				color: #888;
 				margin-bottom: 30px;
+			}
+			/* Grid Layout */
+			.main-grid {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 40px;
+				max-width: 900px;
+				margin: 0 auto;
+			}
+			.column {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+			}
+			@media (max-width: 768px) {
+				.main-grid {
+					grid-template-columns: 1fr;
+					gap: 20px;
+				}
 			}
 			.status-card {
 				background: #16213e;
@@ -166,7 +182,10 @@
 				font-size: 18px;
 				font-weight: 300;
 				color: #888;
-				margin: 40px 0 20px 0;
+				margin: 0 0 20px 0;
+			}
+			.section-title:not(:first-child) {
+				margin-top: 30px;
 			}
 			.token-card {
 				background: #16213e;
@@ -247,84 +266,246 @@
 					opacity: 0;
 				}
 			}
+			/* Header with help button */
+			.header {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				gap: 15px;
+				margin-bottom: 30px;
+			}
+			.header h1 {
+				margin-bottom: 0;
+			}
+			.btn-help {
+				width: 32px;
+				height: 32px;
+				border-radius: 50%;
+				border: 2px solid #3a3a5a;
+				background: #16213e;
+				color: #888;
+				font-size: 16px;
+				font-weight: 600;
+				cursor: pointer;
+				transition: all 0.2s;
+			}
+			.btn-help:hover {
+				border-color: #5a5a8a;
+				color: #eee;
+				background: #1a2a4e;
+			}
+			/* Modal */
+			.modal-overlay {
+				position: fixed;
+				inset: 0;
+				background: rgba(0, 0, 0, 0.8);
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				z-index: 1000;
+				opacity: 0;
+				visibility: hidden;
+				transition:
+					opacity 0.2s,
+					visibility 0.2s;
+			}
+			.modal-overlay.active {
+				opacity: 1;
+				visibility: visible;
+			}
+			.modal {
+				max-width: 450px;
+				max-height: 80vh;
+				overflow-y: auto;
+				margin: 20px;
+				padding: 24px;
+				background: #16213e;
+				border-radius: 12px;
+				text-align: left;
+				position: relative;
+			}
+			.modal-close {
+				position: absolute;
+				top: 16px;
+				right: 16px;
+				width: 28px;
+				height: 28px;
+				border-radius: 50%;
+				border: none;
+				background: #2a2a4a;
+				color: #888;
+				font-size: 18px;
+				cursor: pointer;
+				line-height: 1;
+			}
+			.modal-close:hover {
+				background: #3a3a5a;
+				color: #eee;
+			}
+			.instructions {
+				text-align: left;
+			}
+			.instructions h2 {
+				font-size: 18px;
+				font-weight: 600;
+				color: #eee;
+				margin-bottom: 20px;
+				padding-right: 30px;
+			}
+			.instructions h3 {
+				font-size: 14px;
+				font-weight: 600;
+				color: #aaa;
+				margin: 15px 0 8px 0;
+			}
+			.instructions ol,
+			.instructions ul {
+				margin: 0 0 10px 20px;
+				font-size: 13px;
+				color: #888;
+				line-height: 1.6;
+			}
+			.instructions li {
+				margin-bottom: 6px;
+			}
+			.instructions code {
+				background: #1a1a2e;
+				padding: 2px 6px;
+				border-radius: 4px;
+				font-size: 12px;
+				color: #40916c;
+			}
+			.instructions .note {
+				font-size: 12px;
+				color: #666;
+				font-style: italic;
+				margin-top: 10px;
+			}
 		</style>
 	</head>
 	<body>
-		<h1>🏎️ Race Admin</h1>
+		<div class="header">
+			<h1>🏎️ Race Admin</h1>
+			<button class="btn-help" onclick="openHelpModal()" title="Help">?</button>
+		</div>
 
-		<div class="status-card">
-			<div class="status-row">
-				<span class="status-label">ESP32</span>
-				<span id="esp32-status" class="status-value offline">--</span>
+		<div class="main-grid">
+			<!-- Left Column: Race Controls -->
+			<div class="column">
+				<div class="status-card">
+					<div class="status-row">
+						<span class="status-label">TX</span>
+						<span id="esp32-status" class="status-value offline">--</span>
+					</div>
+					<div class="status-row">
+						<span class="status-label">Player Connected</span>
+						<span style="display: flex; align-items: center; gap: 10px">
+							<span id="player-status" class="status-value offline">No</span>
+							<button class="btn btn-kick" id="kick-btn" onclick="kickPlayer()" disabled>Kick</button>
+						</span>
+					</div>
+					<div class="status-row">
+						<span class="status-label">Video Feed</span>
+						<span id="video-status" class="status-value offline">No</span>
+					</div>
+					<div class="status-row">
+						<span class="status-label">Player Ready</span>
+						<span id="ready-status" class="status-value offline">No</span>
+					</div>
+					<div class="status-row" style="display: none">
+						<span class="status-label">Throttle Limit</span>
+						<span style="display: flex; align-items: center; gap: 10px">
+							<input type="range" id="throttle-slider" min="10" max="50" value="25" style="width: 120px" oninput="updateThrottleLabel()" />
+							<span id="throttle-value" style="min-width: 40px">25%</span>
+							<button class="btn btn-kick" onclick="setThrottle()">Set</button>
+						</span>
+					</div>
+				</div>
+
+				<div class="race-time" id="race-time">00:00.000</div>
+
+				<div style="text-align: center">
+					<button class="btn btn-start" id="start-btn" onclick="startRace()">Start Race</button>
+					<button class="btn btn-stop" id="stop-btn" onclick="stopRace()">Stop</button>
+				</div>
+
+				<div id="message" class="message" style="display: none"></div>
 			</div>
-			<div class="status-row">
-				<span class="status-label">Player Connected</span>
-				<span style="display: flex; align-items: center; gap: 10px">
-					<span id="player-status" class="status-value offline">No</span>
-					<button class="btn btn-kick" id="kick-btn" onclick="kickPlayer()" disabled>Kick</button>
-				</span>
-			</div>
-			<div class="status-row">
-				<span class="status-label">Video Feed</span>
-				<span id="video-status" class="status-value offline">No</span>
-			</div>
-			<div class="status-row">
-				<span class="status-label">Player Ready</span>
-				<span id="ready-status" class="status-value offline">No</span>
-			</div>
-			<div class="status-row">
-				<span class="status-label">Throttle Limit</span>
-				<span style="display: flex; align-items: center; gap: 10px">
-					<input type="range" id="throttle-slider" min="10" max="50" value="25" style="width: 120px" oninput="updateThrottleLabel()" />
-					<span id="throttle-value" style="min-width: 40px">25%</span>
-					<button class="btn btn-kick" onclick="setThrottle()">Set</button>
-				</span>
+
+			<!-- Right Column: YouTube & Tokens -->
+			<div class="column">
+				<h2 class="section-title">🔑 Token Generator</h2>
+
+				<div class="token-card">
+					<div class="token-row">
+						<select id="token-duration" class="token-select">
+							<option value="15">15 minutes</option>
+							<option value="30">30 minutes</option>
+							<option value="60" selected>1 hour</option>
+							<option value="120">2 hours</option>
+							<option value="480">8 hours</option>
+							<option value="1440">24 hours</option>
+						</select>
+						<button class="btn btn-generate" onclick="generateToken()">Generate</button>
+					</div>
+					<div id="token-output" class="token-output" onclick="copyToken()">
+						<span class="hint">Click "Generate" to create a token</span>
+					</div>
+					<div id="token-expires" class="token-expires"></div>
+				</div>
+
+				<h2 class="section-title">🎬 YouTube Stream</h2>
+
+				<div class="status-card">
+					<div class="status-row">
+						<span class="status-label">Stream Status</span>
+						<span class="youtube-status">
+							<span class="live-indicator" id="youtube-indicator"></span>
+							<span id="youtube-status">Offline</span>
+						</span>
+					</div>
+					<div class="status-row" style="justify-content: center; padding-top: 15px">
+						<button class="btn btn-youtube" id="youtube-start-btn" onclick="startYouTubeStream()">▶ Go Live</button>
+						<button class="btn btn-youtube btn-youtube-stop" id="youtube-stop-btn" onclick="stopYouTubeStream()" disabled>⏹ Stop</button>
+					</div>
+				</div>
 			</div>
 		</div>
 
-		<div class="race-time" id="race-time">00:00.000</div>
+		<!-- Help Modal -->
+		<div class="modal-overlay" id="help-modal" onclick="closeHelpModal(event)">
+			<div class="modal" onclick="event.stopPropagation()">
+				<button class="modal-close" onclick="closeHelpModal()">&times;</button>
+				<div class="instructions">
+					<h2>📋 Admin Instructions</h2>
 
-		<div>
-			<button class="btn btn-start" id="start-btn" onclick="startRace()">Start Race</button>
-			<button class="btn btn-stop" id="stop-btn" onclick="stopRace()">Stop</button>
-		</div>
+					<h3>🚀 Running a Race Session</h3>
+					<ol>
+						<li>Generate an access token and send it to the player</li>
+						<li>Wait for player to connect (status shows <code>Player Connected: Yes</code>)</li>
+						<li>Wait for video feed to establish (<code>Video Feed: Yes</code>)</li>
+						<li>Player clicks "Ready" in their UI (<code>Player Ready: Yes</code>)</li>
+						<li>Click <strong>Start Race</strong> — 3 second countdown begins</li>
+						<li>Timer starts after countdown, race is live!</li>
+						<li>Click <strong>Stop</strong> when race is complete</li>
+						<li><strong>Kick</strong> — Disconnects player and revokes their token</li>
+					</ol>
 
-		<div id="message" class="message" style="display: none"></div>
+					<h3>⚙️ Status Indicators</h3>
+					<ul>
+						<li><strong>TX</strong> — Shows IP if RC car controller is connected</li>
+						<li><strong>Player Connected</strong> — Player connected</li>
+						<li><strong>Video Feed</strong> — video stream active</li>
+						<li><strong>Player Ready</strong> — Player confirmed ready to race</li>
+					</ul>
 
-		<h2 class="section-title">� YouTube Stream</h2>
-
-		<div class="status-card">
-			<div class="status-row">
-				<span class="status-label">Stream Status</span>
-				<span class="youtube-status">
-					<span class="live-indicator" id="youtube-indicator"></span>
-					<span id="youtube-status">Offline</span>
-				</span>
+					<h3>🎬 YouTube Streaming</h3>
+					<ul>
+						<li>Click <strong>Go Live</strong> to start restreaming to YouTube</li>
+						<li>Stream uses the configured RTMP key</li>
+					</ul>
+				</div>
 			</div>
-			<div class="status-row" style="justify-content: center; padding-top: 15px">
-				<button class="btn btn-youtube" id="youtube-start-btn" onclick="startYouTubeStream()">▶ Go Live</button>
-				<button class="btn btn-youtube btn-youtube-stop" id="youtube-stop-btn" onclick="stopYouTubeStream()" disabled>⏹ Stop</button>
-			</div>
-		</div>
-
-		<h2 class="section-title">�🔑 Token Generator</h2>
-
-		<div class="token-card">
-			<div class="token-row">
-				<select id="token-duration" class="token-select">
-					<option value="15">15 minutes</option>
-					<option value="30">30 minutes</option>
-					<option value="60" selected>1 hour</option>
-					<option value="120">2 hours</option>
-					<option value="480">8 hours</option>
-					<option value="1440">24 hours</option>
-				</select>
-				<button class="btn btn-generate" onclick="generateToken()">Generate</button>
-			</div>
-			<div id="token-output" class="token-output" onclick="copyToken()">
-				<span class="hint">Click "Generate" to create a token</span>
-			</div>
-			<div id="token-expires" class="token-expires"></div>
 		</div>
 
 		<!-- Optional: Load config.js for deployment-specific URLs -->
@@ -603,6 +784,22 @@
 					setTimeout(() => feedback.remove(), 1000);
 				});
 			}
+
+			// ===== Help Modal =====
+			function openHelpModal() {
+				document.getElementById('help-modal').classList.add('active');
+			}
+
+			function closeHelpModal(event) {
+				if (!event || event.target === event.currentTarget) {
+					document.getElementById('help-modal').classList.remove('active');
+				}
+			}
+
+			// Close modal on Escape key
+			document.addEventListener('keydown', (e) => {
+				if (e.key === 'Escape') closeHelpModal();
+			});
 		</script>
 	</body>
 </html>

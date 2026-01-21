@@ -17,9 +17,11 @@
 				color: #eee;
 				height: 100vh;
 				width: 100vw;
-				touch-action: none;
 				user-select: none;
+			}
+			body.race-mode {
 				overflow: hidden;
+				touch-action: none;
 			}
 			/* Login screen */
 			#login-screen {
@@ -28,10 +30,12 @@
 				display: flex;
 				flex-direction: column;
 				align-items: center;
-				justify-content: center;
+				justify-content: flex-start;
 				gap: 20px;
 				background: #1a1a2e;
 				z-index: 100;
+				overflow-y: auto;
+				padding: 20px;
 			}
 			#login-screen.hidden {
 				display: none;
@@ -84,6 +88,40 @@
 				margin-top: -10px;
 			}
 			#device-status.online {
+				color: #40916c;
+			}
+			.info-section {
+				max-width: 400px;
+				padding: 20px 20px 12px;
+				background: #16213e;
+				border-radius: 12px;
+				text-align: left;
+			}
+			.info-section h2 {
+				font-size: 16px;
+				font-weight: 600;
+				color: #eee;
+				margin-bottom: 12px;
+			}
+			.info-section p {
+				font-size: 14px;
+				color: #888;
+				line-height: 1.5;
+				margin-bottom: 12px;
+			}
+			.info-section ul {
+				margin: 0 0 12px 20px;
+				font-size: 14px;
+				color: #888;
+				line-height: 1.6;
+			}
+			.info-section li {
+				margin-bottom: 4px;
+			}
+			.info-section strong {
+				color: #aaa;
+			}
+			.info-section .highlight {
 				color: #40916c;
 			}
 
@@ -516,7 +554,29 @@
 			<div id="login-error"></div>
 			<div id="device-status">Checking device...</div>
 			<button id="connect-btn">Connect</button>
-			<a href="/leaderboard.html" style="margin-top: 20px; color: #5a5a8a; text-decoration: none; font-size: 14px;">🏆 Leaderboard</a>
+			<a href="/leaderboard.html" style="margin-top: 20px; color: #5a5a8a; text-decoration: none; font-size: 14px">🏆 Leaderboard</a>
+
+			<div class="info-section">
+				<h2>🎮 How It Works</h2>
+				<p>
+					Drive a <strong>real RC car</strong> remotely from your browser! You'll control an actual 1/10 scale vehicle via live video feed.
+				</p>
+
+				<h2>📱 Controls</h2>
+				<ul>
+					<li><strong>Mobile:</strong> Right stick steering, left trigger throttle</li>
+					<li><strong>Desktop:</strong> Arrow keys or WASD</li>
+				</ul>
+
+				<h2>🏁 What to Expect</h2>
+				<ul>
+					<li>Enter your access token to connect</li>
+					<li>Wait for video feed to load</li>
+					<li>Press <strong class="highlight">Ready</strong> when you're set</li>
+					<li>Admin starts the race with countdown</li>
+					<li>Complete the track as fast as you can!</li>
+				</ul>
+			</div>
 		</div>
 
 		<!-- Control Screen - Racing Game Style -->
@@ -823,6 +883,7 @@
 			function showLoginScreen() {
 				loginScreen.classList.remove('hidden');
 				controlScreen.classList.remove('active');
+				document.body.classList.remove('race-mode');
 				connectBtn.disabled = false;
 				connectBtn.textContent = 'Connect';
 				stopFpvStream();
@@ -832,6 +893,7 @@
 			function showControlScreen() {
 				loginScreen.classList.add('hidden');
 				controlScreen.classList.add('active');
+				document.body.classList.add('race-mode');
 				startFpvStream();
 			}
 
@@ -1668,28 +1730,39 @@
 				}
 			});
 
-			// Keyboard handling (WASD + Arrows)
+			// Keyboard handling (WASD + Arrows) - use KeyboardEvent.code for layout-independent keys
+			const KEY_UP = 'KeyW';
+			const KEY_DOWN = 'KeyS';
+			const KEY_LEFT = 'KeyA';
+			const KEY_RIGHT = 'KeyD';
+			const KEY_ARROW_UP = 'ArrowUp';
+			const KEY_ARROW_DOWN = 'ArrowDown';
+			const KEY_ARROW_LEFT = 'ArrowLeft';
+			const KEY_ARROW_RIGHT = 'ArrowRight';
+			const validKeys = [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_ARROW_UP, KEY_ARROW_DOWN, KEY_ARROW_LEFT, KEY_ARROW_RIGHT];
+
 			function updateFromKeys() {
 				if (!isConnected) return;
-				thrSlider = (keys.has('w') || keys.has('arrowup') ? keyStep : 0) + (keys.has('s') || keys.has('arrowdown') ? -keyStep : 0);
+				thrSlider =
+					(keys.has(KEY_UP) || keys.has(KEY_ARROW_UP) ? keyStep : 0) + (keys.has(KEY_DOWN) || keys.has(KEY_ARROW_DOWN) ? -keyStep : 0);
 				thr = thrSlider * thrLimit;
 				// Set target steering (actual str interpolates smoothly in the control loop)
-				strTarget = (keys.has('d') || keys.has('arrowright') ? strStep : 0) + (keys.has('a') || keys.has('arrowleft') ? -strStep : 0);
+				strTarget =
+					(keys.has(KEY_RIGHT) || keys.has(KEY_ARROW_RIGHT) ? strStep : 0) +
+					(keys.has(KEY_LEFT) || keys.has(KEY_ARROW_LEFT) ? -strStep : 0);
 			}
 
 			window.addEventListener('keydown', (e) => {
-				const k = e.key.toLowerCase();
-				if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) {
-					keys.add(k);
+				if (validKeys.includes(e.code)) {
+					keys.add(e.code);
 					updateFromKeys();
 					e.preventDefault();
 				}
 			});
 
 			window.addEventListener('keyup', (e) => {
-				const k = e.key.toLowerCase();
-				if (keys.has(k)) {
-					keys.delete(k);
+				if (keys.has(e.code)) {
+					keys.delete(e.code);
 					updateFromKeys();
 					e.preventDefault();
 				}
