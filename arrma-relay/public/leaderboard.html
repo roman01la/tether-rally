@@ -1,0 +1,209 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Tether Rally - Leaderboard</title>
+		<style>
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+			body {
+				font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+				background: #1a1a2e;
+				color: #eee;
+				min-height: 100vh;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				padding: 40px 20px;
+			}
+			h1 {
+				font-size: 24px;
+				font-weight: 300;
+				color: #888;
+				margin-bottom: 30px;
+			}
+			.leaderboard-card {
+				background: #16213e;
+				border-radius: 12px;
+				padding: 20px;
+				width: 100%;
+				max-width: 600px;
+			}
+			.leaderboard-header {
+				display: grid;
+				grid-template-columns: 50px 1fr 100px 120px;
+				padding: 12px 8px;
+				border-bottom: 2px solid #3a3a5a;
+				color: #888;
+				font-size: 12px;
+				text-transform: uppercase;
+				letter-spacing: 1px;
+			}
+			.leaderboard-row {
+				display: grid;
+				grid-template-columns: 50px 1fr 100px 120px;
+				padding: 14px 8px;
+				border-bottom: 1px solid #2a2a4a;
+				align-items: center;
+				transition: background 0.2s;
+			}
+			.leaderboard-row:hover {
+				background: #1a2a4e;
+			}
+			.leaderboard-row:last-child {
+				border-bottom: none;
+			}
+			.rank {
+				font-weight: 700;
+				font-size: 18px;
+			}
+			.rank-1 {
+				color: #ffd700;
+			}
+			.rank-2 {
+				color: #c0c0c0;
+			}
+			.rank-3 {
+				color: #cd7f32;
+			}
+			.player-info {
+				display: flex;
+				flex-direction: column;
+				gap: 2px;
+			}
+			.player-name {
+				font-weight: 600;
+				font-size: 16px;
+			}
+			.player-track {
+				font-size: 12px;
+				color: #888;
+			}
+			.time {
+				font-family: monospace;
+				font-size: 18px;
+				font-weight: 600;
+				color: #40916c;
+			}
+			.date {
+				font-size: 14px;
+				color: #666;
+				text-align: right;
+			}
+			.empty-state {
+				text-align: center;
+				padding: 40px 20px;
+				color: #666;
+			}
+			.back-link {
+				margin-top: 30px;
+				color: #5a5a8a;
+				text-decoration: none;
+				font-size: 14px;
+			}
+			.back-link:hover {
+				color: #7a7aaa;
+			}
+			@media (max-width: 500px) {
+				.leaderboard-header,
+				.leaderboard-row {
+					grid-template-columns: 40px 1fr 80px;
+				}
+				.date {
+					display: none;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<h1>🏆 Leaderboard</h1>
+
+		<div class="leaderboard-card">
+			<div class="leaderboard-header">
+				<span>#</span>
+				<span>Player</span>
+				<span>Time</span>
+				<span style="text-align: right">Date</span>
+			</div>
+			<div id="leaderboard-body">
+				<div class="empty-state">Loading...</div>
+			</div>
+		</div>
+
+		<a href="/" class="back-link">← Back to Home</a>
+
+		<script>
+			async function loadLeaderboard() {
+				const body = document.getElementById('leaderboard-body');
+
+				try {
+					const res = await fetch('/leaderboard.json');
+					const rides = await res.json();
+
+					if (!rides || rides.length === 0) {
+						body.innerHTML = '<div class="empty-state">No rides recorded yet</div>';
+						return;
+					}
+
+					// Sort by time (ascending - fastest first)
+					rides.sort((a, b) => {
+						return parseTime(a.time) - parseTime(b.time);
+					});
+
+					body.innerHTML = rides
+						.map((ride, index) => {
+							const rank = index + 1;
+							const rankClass = rank <= 3 ? `rank-${rank}` : '';
+							return `
+							<div class="leaderboard-row">
+								<span class="rank ${rankClass}">${rank}</span>
+								<div class="player-info">
+									<span class="player-name">${escapeHtml(ride.player)}</span>
+									<span class="player-track">${escapeHtml(ride.track || 'Unknown Track')}</span>
+								</div>
+								<span class="time">${escapeHtml(ride.time)}</span>
+								<span class="date">${formatDate(ride.date)}</span>
+							</div>
+						`;
+						})
+						.join('');
+				} catch (e) {
+					console.error('Failed to load leaderboard:', e);
+					body.innerHTML = '<div class="empty-state">Failed to load leaderboard</div>';
+				}
+			}
+
+			// Parse time string "MM:SS.mmm" to milliseconds for sorting
+			function parseTime(timeStr) {
+				if (!timeStr) return Infinity;
+				const match = timeStr.match(/^(\d+):(\d+)\.(\d+)$/);
+				if (!match) return Infinity;
+				const [, mins, secs, ms] = match;
+				return parseInt(mins) * 60000 + parseInt(secs) * 1000 + parseInt(ms.padEnd(3, '0').slice(0, 3));
+			}
+
+			function formatDate(dateStr) {
+				if (!dateStr) return '';
+				try {
+					const date = new Date(dateStr);
+					return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+				} catch {
+					return dateStr;
+				}
+			}
+
+			function escapeHtml(str) {
+				if (!str) return '';
+				const div = document.createElement('div');
+				div.textContent = str;
+				return div.innerHTML;
+			}
+
+			loadLeaderboard();
+		</script>
+	</body>
+</html>
