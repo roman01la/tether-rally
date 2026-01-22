@@ -55,8 +55,12 @@ static const float STR_V_LEFT = 2.95f;
 static const float VREF = 3.30f;
 
 // Safety limits (enforced on ESP32, not browser)
-static const float THR_FWD_LIMIT = 0.50f;  // Max forward throttle (50%)
+// Normal mode limits
+static const float THR_FWD_LIMIT = 0.30f;  // Max forward throttle (30%)
 static const float THR_BACK_LIMIT = 0.30f; // Max backward throttle (30%)
+// Turbo mode limits
+static const float THR_FWD_TURBO = 0.65f;  // Max forward throttle turbo (50%)
+static const float THR_BACK_TURBO = 0.30f; // Max backward throttle turbo (30%)
 static const float STR_LIMIT = 1.0f;       // Max steering (100%)
 
 // Behavior
@@ -71,6 +75,7 @@ static const uint32_t LOOP_DT_MS = 5;   // 200 Hz output loop
 static const uint8_t CMD_PING = 0x00;
 static const uint8_t CMD_CTRL = 0x01;
 static const uint8_t CMD_PONG = 0x02;
+static const uint8_t CMD_TURBO = 0x08; // Turbo mode toggle
 
 // State (shared between tasks - marked volatile)
 volatile float target_thr = 0.0f;
@@ -78,6 +83,7 @@ volatile float target_str = 0.0f;
 volatile uint32_t last_cmd_ms = 0;
 volatile bool firstPacket = true;
 volatile uint16_t lastSeq = 0;
+volatile bool turbo_mode = false; // Turbo mode enabled
 
 // Local to control loop (not shared)
 float filtered_thr = 0.0f; // EMA filtered target
@@ -202,11 +208,14 @@ void handlePacket(uint8_t *data, size_t len)
 
     // Apply safety limits (ESP32 is the authority, not browser)
     // Asymmetric throttle: forward and backward have different limits
+    // Use turbo limits if turbo mode is enabled
+    float fwd_limit = turbo_mode ? THR_FWD_TURBO : THR_FWD_LIMIT;
+    float back_limit = turbo_mode ? THR_BACK_TURBO : THR_BACK_LIMIT;
     float new_thr, new_str;
     if (thr_norm >= 0.0f)
-      new_thr = clampf(thr_norm, 0.0f, THR_FWD_LIMIT);
+      new_thr = clampf(thr_norm, 0.0f, fwd_limit);
     else
-      new_thr = clampf(thr_norm, -THR_BACK_LIMIT, 0.0f);
+      new_thr = clampf(thr_norm, -back_limit, 0.0f);
     new_str = clampf(str_norm, -STR_LIMIT, STR_LIMIT);
 
     // Thread-safe update (important on single-core C3)
@@ -215,6 +224,15 @@ void handlePacket(uint8_t *data, size_t len)
     target_str = new_str;
     last_cmd_ms = millis();
     portEXIT_CRITICAL(&targetMux);
+  }
+  else if (cmd == CMD_TURBO && len >= 4)
+  {
+    // Turbo mode: payload is 1 byte (0 = off, 1 = on)
+    bool new_turbo = data[3] != 0;
+    turbo_mode = new_turbo;
+    Serial.print("Turbo mode: ");
+    Serial.println(turbo_mode ? "ON" : "OFF");
+    last_cmd_ms = millis();
   }
   else if (cmd == CMD_PING && len >= 7)
   {

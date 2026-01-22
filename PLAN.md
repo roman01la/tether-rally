@@ -7,8 +7,7 @@ A web-based platform where users can remotely control a real RC car over the int
 ## Core Features
 
 1. **Real-time RC Car Control** ✅ (Implemented)
-
-   - WebRTC DataChannel binary protocol (PING/CTRL/PONG/RACE/STATUS/CONFIG/KICK/TELEM commands)
+   - WebRTC DataChannel binary protocol (PING/CTRL/PONG/RACE/STATUS/CONFIG/KICK/TELEM/TURBO commands)
    - Direct P2P connection via Cloudflare TURN (10-15ms RTT)
    - Pi relay: DataChannel → UDP → ESP32
    - ESP32: FreeRTOS task for UDP receive + 200 Hz control loop
@@ -19,8 +18,8 @@ A web-based platform where users can remotely control a real RC car over the int
    - DAC write optimization (only writes on change, reduces I2C load)
    - Touch controls (dual-zone: throttle left, steering right)
    - Keyboard controls (WASD / Arrow keys) with smooth interpolation
-   - Configurable throttle limits (10-50% via admin, ESP32 hard limit 50%)
-   - Safety limits enforced on ESP32 (not browser)
+   - **Turbo mode** (E key or button): Normal 30% fwd / 30% back → Turbo 65% fwd / 30% back
+   - Safety limits enforced on ESP32 (browser sends raw values, ESP32 clamps)
    - Latency measurement with EMA smoothing
    - **Auto-reconnect on connection loss** with exponential backoff
    - **Race state sync on reconnect** (RACE_RESUME command)
@@ -28,7 +27,6 @@ A web-based platform where users can remotely control a real RC car over the int
    - **GPS telemetry** (position, speed, heading) broadcast at 10Hz
 
 2. **Security & Access Control** ✅ (Implemented)
-
    - HMAC-SHA256 signed time-limited tokens
    - Token generator script (`generate-token.js`) + admin web UI generator
    - Newer tokens automatically invalidate older ones
@@ -39,7 +37,6 @@ A web-based platform where users can remotely control a real RC car over the int
    - **Basic auth protected admin page** (/admin.html)
 
 3. **Racing Game UI** ✅ (Implemented)
-
    - Full-screen FPV video background
    - Glassmorphism control zones at bottom corners
    - HUD overlay with status, values, latency
@@ -52,7 +49,6 @@ A web-based platform where users can remotely control a real RC car over the int
    - **Speed display** in km/h from GPS
 
 4. **FPV Video Streaming** ✅ (Implemented)
-
    - Raspberry Pi Zero 2W + Camera Module 3
    - MediaMTX for WebRTC streaming
    - Cloudflare Tunnel for internet access
@@ -61,7 +57,6 @@ A web-based platform where users can remotely control a real RC car over the int
    - ~100-300ms end-to-end latency
 
 5. **Admin Dashboard** ✅ (Implemented)
-
    - Race state management (idle → countdown → racing)
    - Start race with 3-second countdown (3-2-1-GO!)
    - Stop race command
@@ -75,7 +70,6 @@ A web-based platform where users can remotely control a real RC car over the int
    - **YouTube Live streaming** (start/stop from admin dashboard)
 
 6. **YouTube Restreamer** ✅ (Implemented)
-
    - Fly.io hosted service (auto-scales to zero when idle)
    - Consumes WHEP video stream from car
    - Re-encodes to RTMP for YouTube Live
@@ -87,19 +81,17 @@ A web-based platform where users can remotely control a real RC car over the int
    - Process exits on stop (Fly.io machine auto-stops)
 
 7. **Local Recording on Pi** 🔲 (Future)
-
    - High-quality 720p50 @ 8Mbps recording
    - Telemetry logging to JSONL for offline rendering
    - Post-processing scripts for telemetry overlay burn-in
 
 8. **Tournament System** 🔲 (Planned)
-
    - User registration and queue management
    - Timed race sessions
    - Leaderboard and rankings
    - Support for 10+ participants per tournament
 
-7. **Track Timing System** 🔲 (Planned)
+9. **Track Timing System** 🔲 (Planned)
    - Start/finish line detection
    - Lap timing with millisecond precision
    - Automatic race state management
@@ -156,16 +148,17 @@ All secrets are externalized for open-source compatibility:
 
 ### Binary Protocol
 
-| Command | Byte | Payload                            | Description                                        |
-| ------- | ---- | ---------------------------------- | -------------------------------------------------- |
-| PING    | 0x00 | seq(2) + timestamp(4)              | Latency measurement                                |
-| CTRL    | 0x01 | seq(2) + throttle(2) + steering(2) | Control values (-32767 to 32767)                   |
-| PONG    | 0x02 | timestamp(4)                       | Response to PING (from ESP32)                      |
-| RACE    | 0x03 | sub-cmd(1)                         | Race commands (START=0x01, STOP=0x02, RESUME=0x03) |
-| STATUS  | 0x04 | sub-cmd(1) + value(1)              | Browser→Pi: VIDEO=0x01, READY=0x02                 |
-| CONFIG  | 0x05 | type(1) + value(4)                 | Pi→Browser: throttle limit            |
-| KICK    | 0x06 | -                                  | Pi→Browser: you have been kicked      |
-| TELEM   | 0x07 | race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + heading(2) + fix(1) | Pi→Clients: telemetry + GPS (10Hz, 24 bytes) |
+| Command | Byte | Payload                                                                                     | Description                                        |
+| ------- | ---- | ------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| PING    | 0x00 | seq(2) + timestamp(4)                                                                       | Latency measurement                                |
+| CTRL    | 0x01 | seq(2) + throttle(2) + steering(2)                                                          | Control values (-32767 to 32767)                   |
+| PONG    | 0x02 | timestamp(4)                                                                                | Response to PING (from ESP32)                      |
+| RACE    | 0x03 | sub-cmd(1)                                                                                  | Race commands (START=0x01, STOP=0x02, RESUME=0x03) |
+| STATUS  | 0x04 | sub-cmd(1) + value(1)                                                                       | Browser→Pi: VIDEO=0x01, READY=0x02                 |
+| CONFIG  | 0x05 | throttle_limit(2) + turbo(1)                                                                | Pi→Browser: throttle limit + turbo mode            |
+| KICK    | 0x06 | -                                                                                           | Pi→Browser: you have been kicked                   |
+| TELEM   | 0x07 | race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + heading(2) + fix(1) | Pi→Clients: telemetry + GPS (10Hz, 24 bytes)       |
+| TURBO   | 0x08 | turbo(1)                                                                                    | Browser→Pi→ESP32: turbo mode toggle (0=off, 1=on)  |
 
 Packet format: `seq(uint16 LE) + cmd(uint8) + payload`
 
@@ -193,9 +186,9 @@ Packet format: `seq(uint16 LE) + cmd(uint8) + payload`
 
 ### I2C Pins (MCP4728 DAC)
 
-| Board             | SDA    | SCL    | Notes                              |
-| ----------------- | ------ | ------ | ---------------------------------- |
-| ESP32-WROOM       | GPIO21 | GPIO22 | Standard devkit pinout             |
+| Board               | SDA    | SCL    | Notes                                |
+| ------------------- | ------ | ------ | ------------------------------------ |
+| ESP32-WROOM         | GPIO21 | GPIO22 | Standard devkit pinout               |
 | ESP32-C3 Super Mini | GPIO8  | GPIO9  | Common C3 pinout (verify your board) |
 
 Note: Neutral voltages calibrated for ESP32 VDD ~3.12V (low TX batteries)
@@ -440,20 +433,17 @@ TOKEN_SECRET="your-secret-key" node generate-token.js 60
 #### Components
 
 1. **WebRTC DataChannel Relay** ✅ (Pi + Cloudflare TURN)
-
    - P2P connection via TURN for NAT traversal
    - Authenticates users via HMAC token
    - Routes controls to ESP32 via UDP
    - ~10-15ms control latency
 
 2. **Tournament Service** 🔲 (Planned)
-
    - Manages race queue
    - Tracks timing
    - Updates leaderboard
 
 3. **Database** (PostgreSQL)
-
    - Users, tournaments, race results
    - Leaderboard history
 

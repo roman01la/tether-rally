@@ -226,6 +226,45 @@
 				color: rgba(255, 255, 255, 0.6);
 				font-family: monospace;
 			}
+			#turbo-btn {
+				position: absolute;
+				bottom: 40px;
+				left: 50%;
+				transform: translateX(-50%);
+				padding: 12px 24px;
+				border-radius: 30px;
+				border: 2px solid rgba(100, 100, 140, 0.5);
+				background: rgba(30, 30, 50, 0.7);
+				color: rgba(255, 255, 255, 0.7);
+				font-size: 14px;
+				font-weight: 600;
+				cursor: pointer;
+				backdrop-filter: blur(10px);
+				-webkit-backdrop-filter: blur(10px);
+				transition: all 0.2s;
+				z-index: 20;
+			}
+			#turbo-btn:hover {
+				background: rgba(50, 50, 80, 0.8);
+				border-color: rgba(150, 150, 200, 0.5);
+			}
+			#turbo-btn.active {
+				background: rgba(255, 140, 0, 0.9);
+				border-color: rgba(255, 165, 0, 0.8);
+				color: #000;
+			}
+			#turbo-btn.disabled {
+				opacity: 0.3;
+				pointer-events: none;
+			}
+			@keyframes turbo-pulse {
+				0% {
+					opacity: 0.8;
+				}
+				100% {
+					opacity: 1;
+				}
+			}
 
 			/* Video stats overlay */
 			#video-stats {
@@ -645,7 +684,10 @@
 				<div id="steering-thumb" class="slider-thumb"></div>
 			</div>
 
-			<div id="instructions">WASD / Arrow keys</div>
+			<div id="instructions">WASD / Arrow keys | E = Turbo</div>
+
+			<!-- Turbo Button -->
+			<button id="turbo-btn" class="disabled" onclick="toggleTurbo()">🚀 TURBO (E)</button>
 		</div>
 
 		<!-- Optional: Load config.js for deployment-specific URLs -->
@@ -679,6 +721,7 @@
 			const CMD_CONFIG = 0x05;
 			const CMD_KICK = 0x06; // Pi -> Browser: you have been kicked
 			const CMD_TELEM = 0x07; // Pi -> Browser: telemetry broadcast
+			const CMD_TURBO = 0x08; // Browser -> Pi: turbo mode toggle
 
 			// Race sub-commands
 			const RACE_START_COUNTDOWN = 0x01;
@@ -744,6 +787,7 @@
 			let videoConnected = false;
 			const keys = new Set();
 			let thrLimit = 0.5; // Throttle limit from admin (0-1)
+			let turboMode = false; // Turbo mode from admin
 			const keyStep = 1.0;
 			const strStep = 1.0;
 			const strSmoothRate = 0.15; // How fast steering interpolates (0-1, lower = smoother)
@@ -1232,12 +1276,56 @@
 			}
 
 			function handleConfigCommand(data) {
-				// Format: seq(2) + cmd(1) + throttle_limit(2 as int16)
+				// Format: seq(2) + cmd(1) + throttle_limit(2 as int16) + turbo(1)
 				if (data.byteLength >= 5) {
 					const view = new DataView(data);
 					const thrLimitScaled = view.getInt16(3, true);
 					thrLimit = thrLimitScaled / 32767;
-					console.log('Config received: throttle_limit =', thrLimit);
+
+					// Parse turbo mode if present (byte 5)
+					if (data.byteLength >= 6) {
+						turboMode = view.getUint8(5) !== 0;
+						updateTurboIndicator();
+					}
+
+					console.log('Config received: throttle_limit =', thrLimit, 'turbo =', turboMode);
+				}
+			}
+
+			function updateTurboIndicator() {
+				const turboBtn = document.getElementById('turbo-btn');
+				if (turboMode) {
+					turboBtn.classList.add('active');
+				} else {
+					turboBtn.classList.remove('active');
+				}
+			}
+
+			function sendTurbo(enabled) {
+				if (controlChannel && controlChannel.readyState === 'open') {
+					const buf = new ArrayBuffer(4);
+					const view = new DataView(buf);
+					view.setUint16(0, 0, true); // seq=0
+					view.setUint8(2, CMD_TURBO);
+					view.setUint8(3, enabled ? 1 : 0);
+					controlChannel.send(buf);
+					console.log('Sent turbo:', enabled);
+				}
+			}
+
+			function toggleTurbo() {
+				if (!isConnected) return;
+				turboMode = !turboMode;
+				sendTurbo(turboMode);
+				updateTurboIndicator();
+			}
+
+			function updateTurboButton() {
+				const turboBtn = document.getElementById('turbo-btn');
+				if (isConnected) {
+					turboBtn.classList.remove('disabled');
+				} else {
+					turboBtn.classList.add('disabled');
 				}
 			}
 
@@ -1408,6 +1496,7 @@
 					controlInterval = setInterval(sendControl, 20);
 					// Start ping for latency measurement
 					pingInterval = setInterval(sendPing, 500);
+					updateTurboButton();
 				};
 
 				controlChannel.onclose = () => {
@@ -1416,6 +1505,9 @@
 					clearInterval(controlInterval);
 					clearInterval(pingInterval);
 					setStatus('disconnected', 'Disconnected');
+					turboMode = false;
+					updateTurboIndicator();
+					updateTurboButton();
 					throttleZone.classList.add('disabled');
 					steeringZone.classList.add('disabled');
 					waitingOverlay.classList.remove('active'); // Hide waiting when disconnected
@@ -1607,7 +1699,8 @@
 				const range = (rect.height - 80) / 2;
 				let dy = origin - clientY;
 				thrSlider = Math.max(-1, Math.min(1, dy / range));
-				thr = thrSlider * thrLimit;
+				// Send raw throttle value - ESP32 enforces all safety limits
+				thr = thrSlider;
 				sendControl();
 			}
 
@@ -1745,7 +1838,8 @@
 				if (!isConnected) return;
 				thrSlider =
 					(keys.has(KEY_UP) || keys.has(KEY_ARROW_UP) ? keyStep : 0) + (keys.has(KEY_DOWN) || keys.has(KEY_ARROW_DOWN) ? -keyStep : 0);
-				thr = thrSlider * thrLimit;
+				// Send raw throttle value - ESP32 enforces all safety limits
+				thr = thrSlider;
 				// Set target steering (actual str interpolates smoothly in the control loop)
 				strTarget =
 					(keys.has(KEY_RIGHT) || keys.has(KEY_ARROW_RIGHT) ? strStep : 0) +
@@ -1756,6 +1850,9 @@
 				if (validKeys.includes(e.code)) {
 					keys.add(e.code);
 					updateFromKeys();
+					e.preventDefault();
+				} else if (e.code === 'KeyE' && !e.repeat) {
+					toggleTurbo();
 					e.preventDefault();
 				}
 			});

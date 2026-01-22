@@ -16,6 +16,7 @@ Control a real RC car from anywhere in the world through your browser. This proj
 - **Low-latency control** - ~100-200ms over internet, ~10-15ms on LAN
 - **Live FPV video** - 720p @ 30fps H.264 streaming
 - **Touch & keyboard controls** - Works on mobile and desktop (smooth interpolation)
+- **Turbo mode** - Press E or tap button for extra speed (30% → 65% forward throttle)
 - **Token-based access** - Secure, time-limited access tokens
 - **Auto-reconnect** - Handles connection drops gracefully, resumes race state
 - **ESP32-WROOM & ESP32-C3** - Compatible with both (C3 Super Mini for smaller builds)
@@ -24,7 +25,6 @@ Control a real RC car from anywhere in the world through your browser. This proj
 - **Safety limits** - Throttle limits enforced on the car (not browser)
 - **Admin dashboard** - Race management, player monitoring, kick functionality
 - **Race state machine** - Countdown → racing → stop flow
-- **Adjustable throttle** - Admin can set 10-50% limit in real-time
 - **Player ready system** - Player must confirm ready before race starts
 - **YouTube Live streaming** - Stream to YouTube from admin dashboard (Fly.io restreamer)
 - **Live telemetry overlay** - Race time, throttle & steering displayed on YouTube stream
@@ -101,10 +101,10 @@ This project can be adapted for direct Pi control by modifying `control-relay.py
 
 **On the Transmitter (ARRMA Big Rock setup):**
 
-| Component                  | Purpose                         | Est. Cost |
-| -------------------------- | ------------------------------- | --------- |
+| Component                               | Purpose                         | Est. Cost |
+| --------------------------------------- | ------------------------------- | --------- |
 | ESP32 DevKit **or** ESP32-C3 Super Mini | Receives UDP, controls DAC      | ~$5-10    |
-| MCP4728 DAC                | 12-bit I2C DAC (cleaner output) | ~$5       |
+| MCP4728 DAC                             | 12-bit I2C DAC (cleaner output) | ~$5       |
 
 **ESP32-C3 Super Mini** is recommended for compact builds - it's smaller than a standard DevKit and works identically (single-core, but plenty fast for this use case).
 
@@ -142,7 +142,7 @@ ESP32 GND           ──> MCP4728 GND
 MCP4728 LDAC        ──> GND (immediate output update)
 ```
 
-*Note: I2C pins vary by board. Run an I2C scanner sketch to verify the DAC is detected at address 0x60.*
+_Note: I2C pins vary by board. Run an I2C scanner sketch to verify the DAC is detected at address 0x60._
 
 **MCP4728 DAC to Transmitter:**
 
