@@ -463,13 +463,23 @@
 			}
 			#track-map .speed-display {
 				position: absolute;
-				bottom: 5px;
+				bottom: 18px;
 				left: 50%;
 				transform: translateX(-50%);
 				font-size: 14px;
 				font-weight: 700;
 				font-family: monospace;
 				color: #fff;
+				text-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
+			}
+			#track-map .distance-display {
+				position: absolute;
+				bottom: 5px;
+				left: 50%;
+				transform: translateX(-50%);
+				font-size: 11px;
+				font-family: monospace;
+				color: rgba(255, 255, 255, 0.7);
 				text-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
 			}
 
@@ -643,6 +653,7 @@
 				<div class="car-dot" id="car-dot"></div>
 				<div class="no-fix" id="no-gps-fix">No GPS</div>
 				<div class="speed-display" id="speed-display">0 km/h</div>
+				<div class="distance-display" id="distance-display"></div>
 			</div>
 
 			<!-- Countdown Overlay -->
@@ -801,6 +812,12 @@
 			let gpsSpeed = 0;
 			let gpsHeading = 0;
 			let gpsFix = false;
+
+			// Distance tracking (during race)
+			let prevGpsLat = null;
+			let prevGpsLon = null;
+			let totalDistance = 0; // in meters
+			let isRacing = false;
 
 			// Track map configuration
 			// Set these for each track: two opposite corners (SW and NE)
@@ -1234,6 +1251,11 @@
 					case RACE_START_COUNTDOWN:
 						stoppedOverlay.classList.remove('active'); // Hide stopped overlay if visible
 						waitingOverlay.classList.remove('active'); // Hide waiting overlay
+						// Reset distance tracking
+						totalDistance = 0;
+						prevGpsLat = null;
+						prevGpsLon = null;
+						isRacing = true;
 						showCountdown();
 						break;
 					case RACE_RESUME:
@@ -1242,6 +1264,7 @@
 						stoppedOverlay.classList.remove('active');
 						waitingOverlay.classList.remove('active');
 						countdownOverlay.classList.remove('active');
+						isRacing = true;
 						// Start timer from 0 (we don't know the actual elapsed time)
 						raceStartTime = Date.now();
 						raceTimerEl.classList.add('active');
@@ -1250,6 +1273,7 @@
 						}
 						break;
 					case RACE_STOP:
+						isRacing = false;
 						// Capture final time before stopping
 						let finalTime = '00:00.000';
 						if (raceStartTime) {
@@ -1359,14 +1383,48 @@
 				updateTrackMap();
 			}
 
+			// Haversine formula to calculate distance between two GPS points (returns meters)
+			function haversineDistance(lat1, lon1, lat2, lon2) {
+				const R = 6371000; // Earth's radius in meters
+				const dLat = (lat2 - lat1) * Math.PI / 180;
+				const dLon = (lon2 - lon1) * Math.PI / 180;
+				const a =
+					Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+					Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+					Math.sin(dLon / 2) * Math.sin(dLon / 2);
+				const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+				return R * c;
+			}
+
 			function updateTrackMap() {
 				const trackMap = document.getElementById('track-map');
 				const carDot = document.getElementById('car-dot');
 				const noGpsFix = document.getElementById('no-gps-fix');
 				const speedDisplay = document.getElementById('speed-display');
+				const distanceDisplay = document.getElementById('distance-display');
 
 				// Update speed display
 				speedDisplay.textContent = `${Math.round(gpsSpeed)} km/h`;
+
+				// Accumulate distance if racing and have GPS fix
+				if (isRacing && gpsFix && prevGpsLat !== null && prevGpsLon !== null) {
+					const dist = haversineDistance(prevGpsLat, prevGpsLon, gpsLat, gpsLon);
+					// Filter out GPS jumps (> 10m between updates is suspicious at low speeds)
+					if (dist < 10) {
+						totalDistance += dist;
+					}
+				}
+				if (gpsFix) {
+					prevGpsLat = gpsLat;
+					prevGpsLon = gpsLon;
+				}
+
+				// Update distance display (show only during/after race)
+				if (totalDistance > 0) {
+					distanceDisplay.textContent = `${(totalDistance / 1000).toFixed(2)} km`;
+				} else {
+					distanceDisplay.textContent = '';
+				}
 
 				// Show/hide GPS fix indicator
 				if (!gpsFix) {
@@ -1383,20 +1441,25 @@
 					return;
 				}
 
+				// Check if coordinates are within track bounds
+				const isOutOfBounds =
+					gpsLat < trackConfig.sw.lat || gpsLat > trackConfig.ne.lat || gpsLon < trackConfig.sw.lon || gpsLon > trackConfig.ne.lon;
+
+				if (isOutOfBounds) {
+					carDot.style.display = 'none';
+					return;
+				}
+
 				// Calculate position on map (0-100%)
 				// Map GPS coordinates to pixel position within the track bounds
 				const latRange = trackConfig.ne.lat - trackConfig.sw.lat;
 				const lonRange = trackConfig.ne.lon - trackConfig.sw.lon;
 
-				// Clamp to track bounds
-				const clampedLat = Math.max(trackConfig.sw.lat, Math.min(trackConfig.ne.lat, gpsLat));
-				const clampedLon = Math.max(trackConfig.sw.lon, Math.min(trackConfig.ne.lon, gpsLon));
-
 				// Calculate percentage position (0-100)
 				// X: longitude (left=0, right=100)
 				// Y: latitude (bottom=0, top=100, but CSS top is inverted)
-				const xPercent = ((clampedLon - trackConfig.sw.lon) / lonRange) * 100;
-				const yPercent = 100 - ((clampedLat - trackConfig.sw.lat) / latRange) * 100; // Invert for CSS
+				const xPercent = ((gpsLon - trackConfig.sw.lon) / lonRange) * 100;
+				const yPercent = 100 - ((gpsLat - trackConfig.sw.lat) / latRange) * 100; // Invert for CSS
 
 				carDot.style.left = `${xPercent}%`;
 				carDot.style.top = `${yPercent}%`;

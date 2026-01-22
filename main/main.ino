@@ -59,8 +59,8 @@ static const float VREF = 3.30f;
 static const float THR_FWD_LIMIT = 0.50f;  // Max forward throttle (50%)
 static const float THR_BACK_LIMIT = 0.40f; // Max backward throttle (40%)
 // Turbo mode limits
-static const float THR_FWD_TURBO = 0.75f;  // Max forward throttle turbo (75%)
-static const float THR_BACK_TURBO = 0.50f; // Max backward throttle turbo (50%)
+static const float THR_FWD_TURBO = 0.85f;  // Max forward throttle turbo (85%)
+static const float THR_BACK_TURBO = 0.70f; // Max backward throttle turbo (70%)
 static const float STR_LIMIT = 1.0f;       // Max steering (100%)
 
 // Behavior
