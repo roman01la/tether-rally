@@ -56,11 +56,11 @@ static const float VREF = 3.30f;
 
 // Safety limits (enforced on ESP32, not browser)
 // Normal mode limits
-static const float THR_FWD_LIMIT = 0.30f;  // Max forward throttle (30%)
-static const float THR_BACK_LIMIT = 0.30f; // Max backward throttle (30%)
+static const float THR_FWD_LIMIT = 0.50f;  // Max forward throttle (50%)
+static const float THR_BACK_LIMIT = 0.40f; // Max backward throttle (40%)
 // Turbo mode limits
-static const float THR_FWD_TURBO = 0.65f;  // Max forward throttle turbo (50%)
-static const float THR_BACK_TURBO = 0.30f; // Max backward throttle turbo (30%)
+static const float THR_FWD_TURBO = 0.75f;  // Max forward throttle turbo (75%)
+static const float THR_BACK_TURBO = 0.50f; // Max backward throttle turbo (50%)
 static const float STR_LIMIT = 1.0f;       // Max steering (100%)
 
 // Behavior

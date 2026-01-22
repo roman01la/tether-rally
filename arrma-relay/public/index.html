@@ -786,7 +786,6 @@
 			let deviceOnline = false;
 			let videoConnected = false;
 			const keys = new Set();
-			let thrLimit = 0.5; // Throttle limit from admin (0-1)
 			let turboMode = false; // Turbo mode from admin
 			const keyStep = 1.0;
 			const strStep = 1.0;
@@ -1276,19 +1275,12 @@
 			}
 
 			function handleConfigCommand(data) {
-				// Format: seq(2) + cmd(1) + throttle_limit(2 as int16) + turbo(1)
-				if (data.byteLength >= 5) {
+				// Format: seq(2) + cmd(1) + reserved(2) + turbo(1)
+				if (data.byteLength >= 6) {
 					const view = new DataView(data);
-					const thrLimitScaled = view.getInt16(3, true);
-					thrLimit = thrLimitScaled / 32767;
-
-					// Parse turbo mode if present (byte 5)
-					if (data.byteLength >= 6) {
-						turboMode = view.getUint8(5) !== 0;
-						updateTurboIndicator();
-					}
-
-					console.log('Config received: throttle_limit =', thrLimit, 'turbo =', turboMode);
+					turboMode = view.getUint8(5) !== 0;
+					updateTurboIndicator();
+					console.log('Config received: turbo =', turboMode);
 				}
 			}
 
@@ -1303,13 +1295,14 @@
 
 			function sendTurbo(enabled) {
 				if (controlChannel && controlChannel.readyState === 'open') {
+					controlSeq = (controlSeq + 1) & 0xffff;
 					const buf = new ArrayBuffer(4);
 					const view = new DataView(buf);
-					view.setUint16(0, 0, true); // seq=0
+					view.setUint16(0, controlSeq, true);
 					view.setUint8(2, CMD_TURBO);
 					view.setUint8(3, enabled ? 1 : 0);
 					controlChannel.send(buf);
-					console.log('Sent turbo:', enabled);
+					console.log('Sent turbo:', enabled, 'seq:', controlSeq);
 				}
 			}
 

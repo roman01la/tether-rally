@@ -412,14 +412,6 @@
 						<span class="status-label">Player Ready</span>
 						<span id="ready-status" class="status-value offline">No</span>
 					</div>
-					<div class="status-row" style="display: none">
-						<span class="status-label">Throttle Limit</span>
-						<span style="display: flex; align-items: center; gap: 10px">
-							<input type="range" id="throttle-slider" min="10" max="50" value="25" style="width: 120px" oninput="updateThrottleLabel()" />
-							<span id="throttle-value" style="min-width: 40px">25%</span>
-							<button class="btn btn-kick" onclick="setThrottle()">Set</button>
-						</span>
-					</div>
 				</div>
 
 				<div class="race-time" id="race-time">00:00.000</div>
@@ -523,8 +515,6 @@
 			let timerInterval = null;
 			let youtubeStreaming = false;
 
-			let throttleInitialized = false; // Only set slider from server once on load
-
 			// ===== YouTube Streaming =====
 			async function updateYouTubeStatus() {
 				try {
@@ -614,43 +604,11 @@
 					document.getElementById('ready-status').textContent = data.player_ready ? 'Yes' : 'No';
 					document.getElementById('ready-status').className = 'status-value ' + (data.player_ready ? 'online' : 'offline');
 
-					// Only initialize throttle slider once from server (not on every poll)
-					if (!throttleInitialized && data.throttle_limit !== undefined) {
-						const pct = Math.round(data.throttle_limit * 100);
-						document.getElementById('throttle-slider').value = pct;
-						document.getElementById('throttle-value').textContent = pct + '%';
-						throttleInitialized = true;
-					}
-
 					// Only enable start when player is ready (has video + clicked ready)
 					document.getElementById('start-btn').disabled = !data.player_ready;
 					document.getElementById('kick-btn').disabled = !data.channel_open;
 				} catch (e) {
 					console.error('Status check failed:', e);
-				}
-			}
-
-			function updateThrottleLabel() {
-				const val = document.getElementById('throttle-slider').value;
-				document.getElementById('throttle-value').textContent = val + '%';
-			}
-
-			async function setThrottle() {
-				const val = parseInt(document.getElementById('throttle-slider').value);
-				try {
-					const res = await fetch(`${CONTROL_URL}/admin/set-throttle`, {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ limit: val / 100 }),
-					});
-					const data = await res.json();
-					if (data.success) {
-						showMessage(`Throttle set to ${val}%`);
-					} else {
-						showMessage(data.error || 'Failed to set throttle', true);
-					}
-				} catch (e) {
-					showMessage('Failed to set throttle: ' + e.message, true);
 				}
 			}
 

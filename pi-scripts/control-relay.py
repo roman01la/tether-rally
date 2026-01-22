@@ -105,9 +105,7 @@ race_state = "idle"
 race_start_time = None  # Unix timestamp when race started (after countdown)
 countdown_task = None  # Asyncio task for countdown timer
 
-# Throttle limit (0.0 to 0.5 max normal, 0.75 turbo - ESP32 enforces hard limit)
-throttle_limit = 0.25  # Default 25%
-turbo_mode = False     # Turbo mode: increases limits (fwd 75%, back 50%)
+turbo_mode = False     # Turbo mode: increases limits (ESP32 enforces hard limits)
 
 # Revoked tokens (persisted to file, keeps last 10)
 REVOKED_TOKENS_FILE = '/home/pi/revoked_tokens.txt'
@@ -444,16 +442,11 @@ async def handle_offer(request):
                             player_ready = value
                             logger.info(f"Player ready: {player_ready}")
                 elif cmd == CMD_TURBO:  # TURBO - player toggling turbo mode
-                    global turbo_mode, throttle_limit
+                    global turbo_mode
                     if len(message) >= 4:
                         new_turbo = message[3] == 1
                         turbo_mode = new_turbo
                         logger.info(f"Turbo mode set by player: {turbo_mode}")
-                        
-                        # If turning off turbo and throttle exceeds normal limit, clamp it
-                        if not turbo_mode and throttle_limit > 0.5:
-                            throttle_limit = 0.5
-                            logger.info(f"Throttle limit clamped to {throttle_limit} (turbo off)")
                         
                         # Forward to ESP32
                         send_turbo_to_esp32()
@@ -618,7 +611,6 @@ async def handle_health(request):
             "channel_open": control_channel is not None and control_channel.readyState == "open",
             "video_connected": video_connected,
             "player_ready": player_ready,
-            "throttle_limit": throttle_limit,
             "turbo_mode": turbo_mode,
             "gps": {
                 "fix": gps_fix,
@@ -655,18 +647,16 @@ def send_race_command(sub_cmd: int, payload: bytes = b''):
     return True
 
 def send_config():
-    """Send current config (throttle limit, turbo mode) to browser"""
-    global control_channel, throttle_limit, turbo_mode
+    """Send current config (turbo mode) to browser"""
+    global control_channel, turbo_mode
     
     if control_channel is None or control_channel.readyState != "open":
         return False
     
-    # Format: seq(2) + cmd(1) + throttle_limit(2 as int16 scaled) + turbo(1)
-    # Scale 0.0-1.0 to 0-32767
-    thr_scaled = int(throttle_limit * 32767)
-    message = struct.pack('<HBhB', 0, CMD_CONFIG, thr_scaled, 1 if turbo_mode else 0)
+    # Format: seq(2) + cmd(1) + reserved(2) + turbo(1)
+    message = struct.pack('<HBhB', 0, CMD_CONFIG, 0, 1 if turbo_mode else 0)
     control_channel.send(message)
-    logger.info(f"Sent config: throttle_limit={throttle_limit}, turbo={turbo_mode}")
+    logger.info(f"Sent config: turbo={turbo_mode}")
     return True
 
 def send_turbo_to_esp32():
@@ -796,30 +786,9 @@ async def handle_kick_player(request):
     logger.info("Player kicked and token revoked")
     return web.json_response({"success": True}, headers=CORS_HEADERS)
 
-async def handle_set_throttle(request):
-    """Admin endpoint to set throttle limit"""
-    global throttle_limit, turbo_mode
-    
-    try:
-        body = await request.json()
-        new_limit = float(body.get('limit', 0.25))
-        # Clamp to valid range based on turbo mode
-        # Normal: max 0.5, Turbo: max 0.75 (ESP32 enforces hard limits)
-        max_limit = 0.75 if turbo_mode else 0.5
-        throttle_limit = max(0.1, min(max_limit, new_limit))
-        logger.info(f"Throttle limit set to {throttle_limit}")
-        
-        # Send to connected browser immediately
-        send_config()
-        
-        return web.json_response({"success": True, "throttle_limit": throttle_limit}, headers=CORS_HEADERS)
-    except Exception as e:
-        logger.error(f"Error setting throttle: {e}")
-        return web.json_response({"success": False, "error": str(e)}, status=400, headers=CORS_HEADERS)
-
 async def handle_set_turbo(request):
     """Admin endpoint to toggle turbo mode"""
-    global turbo_mode, throttle_limit
+    global turbo_mode
     
     try:
         body = await request.json()
@@ -827,18 +796,13 @@ async def handle_set_turbo(request):
         turbo_mode = new_turbo
         logger.info(f"Turbo mode set to {turbo_mode}")
         
-        # If turning off turbo and throttle exceeds normal limit, clamp it
-        if not turbo_mode and throttle_limit > 0.5:
-            throttle_limit = 0.5
-            logger.info(f"Throttle limit clamped to {throttle_limit} (turbo off)")
-        
         # Send turbo mode to ESP32
         send_turbo_to_esp32()
         
         # Send updated config to browser
         send_config()
         
-        return web.json_response({"success": True, "turbo_mode": turbo_mode, "throttle_limit": throttle_limit}, headers=CORS_HEADERS)
+        return web.json_response({"success": True, "turbo_mode": turbo_mode}, headers=CORS_HEADERS)
     except Exception as e:
         logger.error(f"Error setting turbo: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=400, headers=CORS_HEADERS)
@@ -880,8 +844,6 @@ async def main():
     app.router.add_options("/admin/stop-race", handle_options)
     app.router.add_post("/admin/kick-player", handle_kick_player)
     app.router.add_options("/admin/kick-player", handle_options)
-    app.router.add_post("/admin/set-throttle", handle_set_throttle)
-    app.router.add_options("/admin/set-throttle", handle_options)
     app.router.add_post("/admin/set-turbo", handle_set_turbo)
     app.router.add_options("/admin/set-turbo", handle_options)
     
