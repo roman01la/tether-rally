@@ -2,18 +2,17 @@
 
 # Tether Rally - Remote Control RC Car Over the Internet
 
-Control a real RC car from anywhere in the world through your browser. This project enables low-latency remote control (~100-200ms) with live FPV video streaming, using WebRTC for peer-to-peer communication.
+Control a real RC car from anywhere in the world through your browser. This project enables low-latency remote control (~50-100ms over 4G) with live FPV video streaming, using WebRTC for peer-to-peer communication.
 
 |                        |                        |
 | :--------------------: | :--------------------: |
-| ![Setup 1](imgs/1.jpg) | ![Setup 2](imgs/2.jpg) |
+| ![Setup 1](imgs/7.jpg) | ![Setup 2](imgs/2.jpg) |
 | ![Setup 3](imgs/3.jpg) | ![Setup 4](imgs/4.jpg) |
-| ![Setup 5](imgs/5.jpg) | ![Setup 6](imgs/6.jpg) |
-| ![Setup 5](imgs/7.jpg) |                        |
+| ![Setup 8](imgs/8.jpg) | ![Setup 6](imgs/6.jpg) |
 
 ## Features
 
-- **Low-latency control** - ~100-200ms over internet, ~10-15ms on LAN
+- **Low-latency control** - ~50-100ms over internet, ~10-15ms on LAN
 - **Live FPV video** - 720p @ 30fps H.264 streaming
 - **Touch & keyboard controls** - Works on mobile and desktop (smooth interpolation)
 - **Turbo mode** - Press E or tap button for extra speed (30% → 65% forward throttle)

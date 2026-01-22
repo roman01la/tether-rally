@@ -54,7 +54,7 @@ A web-based platform where users can remotely control a real RC car over the int
    - Cloudflare Tunnel for internet access
    - Cloudflare TURN for NAT traversal
    - 720p @ 2Mbps @ 30fps H.264
-   - ~100-300ms end-to-end latency
+   - ~10-20ms end-to-end latency
 
 5. **Admin Dashboard** ✅ (Implemented)
    - Race state management (idle → countdown → racing)
@@ -272,13 +272,13 @@ Note: Neutral voltages calibrated for ESP32 VDD ~3.12V (low TX batteries)
 
 ### Data Flow Summary
 
-| Path                         | Protocol                    | Rate       | Latency    |
-| ---------------------------- | --------------------------- | ---------- | ---------- |
-| Controls: Browser → Pi → ESP | DataChannel → UDP (7 bytes) | 50 Hz      | ~10-15ms   |
-| Latency Ping: Browser ↔ ESP  | DataChannel ↔ UDP           | 2 Hz       | measured   |
-| Video: Pi → Browser          | WebRTC H.264                | 30 fps     | ~100-300ms |
-| WHEP Signaling: Browser ↔ Pi | HTTPS (via Tunnel)          | On-connect | -          |
-| TURN Relay: Pi ↔ Browser     | UDP (via Cloudflare)        | Continuous | ~5-10ms    |
+| Path                         | Protocol                    | Rate       | Latency   |
+| ---------------------------- | --------------------------- | ---------- | --------- |
+| Controls: Browser → Pi → ESP | DataChannel → UDP (7 bytes) | 50 Hz      | ~60-100ms |
+| Latency Ping: Browser ↔ ESP  | DataChannel ↔ UDP           | 2 Hz       | measured  |
+| Video: Pi → Browser          | WebRTC H.264                | 30 fps     | ~10-20ms  |
+| WHEP Signaling: Browser ↔ Pi | HTTPS (via Tunnel)          | On-connect | -         |
+| TURN Relay: Pi ↔ Browser     | UDP (via Cloudflare)        | Continuous | ~5-10ms   |
 
 ---
 
@@ -436,7 +436,7 @@ TOKEN_SECRET="your-secret-key" node generate-token.js 60
    - P2P connection via TURN for NAT traversal
    - Authenticates users via HMAC token
    - Routes controls to ESP32 via UDP
-   - ~10-15ms control latency
+   - ~50-100ms control latency
 
 2. **Tournament Service** 🔲 (Planned)
    - Manages race queue
@@ -638,7 +638,7 @@ CREATE TABLE race_results (
 | Frontend      | Vanilla JS (single HTML)    | No build step, simple deployment   |
 | Hosting       | Cloudflare Workers + Tunnel | Free tier, low latency             |
 | Auth          | HMAC tokens                 | Simple, no third-party deps        |
-| Real-time     | WebRTC DataChannel          | P2P, ~10-15ms latency              |
+| Real-time     | WebRTC DataChannel          | P2P, ~50-100ms latency             |
 
 ---
 
