@@ -474,19 +474,16 @@
 			/* Track map overlay */
 			#track-map {
 				position: absolute;
-				top: 60px;
+				top: 20px;
 				right: 15px;
-				max-width: 220px;
-				background: rgba(0, 0, 0, 0.6);
-				border-radius: 10px;
+				max-width: 110px;
 				overflow: hidden;
 				pointer-events: none;
 				display: none;
 				z-index: 10;
 			}
 			#track-map.active {
-				/* tmp disabled */
-				/* display: block; */
+				display: block;
 			}
 			#track-map img {
 				display: block;
@@ -753,7 +750,9 @@
 				font-size: 16px;
 				border: none;
 				border-radius: 10px;
+
 				background: var(--color-success-dark);
+
 				color: #eee;
 				cursor: pointer;
 				font-weight: 600;
@@ -763,6 +762,7 @@
 			}
 			#track-modal-link {
 				color: var(--color-accent);
+
 				text-decoration: none;
 				font-size: 14px;
 			}
@@ -773,6 +773,18 @@
 		</style>
 	</head>
 	<body>
+		<!-- Track Map Modal -->
+		<div id="track-modal" class="hidden">
+			<div id="track-modal-content">
+				<h2>Track Map</h2>
+				<img src="/track_01.png" alt="Track Map" />
+				<div id="track-modal-actions">
+					<button id="track-modal-close">Got it!</button>
+					<a id="track-modal-link" href="/track_01.png" target="_blank">Open in new tab ↗</a>
+				</div>
+			</div>
+		</div>
+
 		<!-- Login Screen -->
 		<div id="login-screen">
 			<img src="logo.png" alt="Tether Rally" style="max-width: 340px; height: auto" />
@@ -1681,7 +1693,7 @@
 
 					const parts = [];
 					if (resolution) parts.push(resolution);
-					if (fps > 0) parts.push(`${fps + MINIMAL_MEASURED_VIDEO_LATENCY}fps`);
+					if (fps > 0) parts.push(`${fps}fps`);
 					if (bitrate > 0) parts.push(`${bitrate}kbps`);
 					if (rttMs > 0) parts.push(`${Math.round(rttMs / 2) + MINIMAL_MEASURED_VIDEO_LATENCY}ms`);
 					if (wcDecoderQueueSize > 0) parts.push(`q:${wcDecoderQueueSize}`);
@@ -2236,8 +2248,8 @@
 					setStatus('connected', 'Connected');
 					throttleZone.classList.remove('disabled');
 					steeringZone.classList.remove('disabled');
-					// Show waiting overlay until race starts
-					waitingOverlay.classList.add('active');
+					// Show track map modal first, then waiting overlay
+					document.getElementById('track-modal').classList.remove('hidden');
 					// Start 50Hz control loop
 					controlInterval = setInterval(sendControl, CONTROL_INTERVAL_MS);
 					// Start ping for latency measurement
@@ -2617,6 +2629,31 @@
 				requestAnimationFrame(updateHudClock);
 			}
 			updateHudClock();
+			// Track map modal
+			const trackModal = document.getElementById('track-modal');
+			const trackModalClose = document.getElementById('track-modal-close');
+
+			function closeTrackModal() {
+				trackModal.classList.add('hidden');
+				// Show waiting overlay so user can press Ready button
+				waitingOverlay.classList.add('active');
+			}
+
+			trackModalClose.addEventListener('click', closeTrackModal);
+
+			// Close modal when clicking outside the content
+			trackModal.addEventListener('click', (e) => {
+				if (e.target === trackModal) {
+					closeTrackModal();
+				}
+			});
+
+			// Close modal with Escape key
+			window.addEventListener('keydown', (e) => {
+				if (e.key === 'Escape' && !trackModal.classList.contains('hidden')) {
+					closeTrackModal();
+				}
+			});
 		</script>
 	</body>
 </html>
