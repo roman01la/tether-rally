@@ -25,8 +25,19 @@ A web-based platform where users can remotely control a real RC car over the int
    - **Race state sync on reconnect** (RACE_RESUME command)
    - **FPV auto-reconnect** when video stream drops
    - **GPS telemetry** (position, speed, heading) broadcast at 10Hz
+   - **IMU compass (BNO055)** for stable heading at low speed/stopped
+   - **Heading blending** (IMU when slow, GPS course when moving)
+   - **Compass HUD** (video game style horizontal strip)
+   - **Map arrow** rotates to show car direction
 
-2. **Security & Access Control** ✅ (Implemented)
+2. **Geofencing** 🔲 (Planned)
+   - Define track boundaries from map data
+   - Add 10m buffer zone around boundaries
+   - When car exits geofence (boundaries + 10m), controls are ignored
+   - Uses GPS position from telemetry to check bounds
+   - Safety feature to prevent car from driving away
+
+3. **Security & Access Control** ✅ (Implemented)
    - HMAC-SHA256 signed time-limited tokens
    - Token generator script (`generate-token.js`) + admin web UI generator
    - Newer tokens automatically invalidate older ones
@@ -157,7 +168,7 @@ All secrets are externalized for open-source compatibility:
 | STATUS  | 0x04 | sub-cmd(1) + value(1)                                                                       | Browser→Pi: VIDEO=0x01, READY=0x02                 |
 | CONFIG  | 0x05 | throttle_limit(2) + turbo(1)                                                                | Pi→Browser: throttle limit + turbo mode            |
 | KICK    | 0x06 | -                                                                                           | Pi→Browser: you have been kicked                   |
-| TELEM   | 0x07 | race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + heading(2) + fix(1) | Pi→Clients: telemetry + GPS (10Hz, 24 bytes)       |
+| TELEM   | 0x07 | race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + gps_heading(2) + fix(1) + imu_heading(2) + calibration(1) + yaw_rate(2) | Pi→Clients: telemetry + GPS + IMU (10Hz, 29 bytes) |
 | TURBO   | 0x08 | turbo(1)                                                                                    | Browser→Pi→ESP32: turbo mode toggle (0=off, 1=on)  |
 
 Packet format: `seq(uint16 LE) + cmd(uint8) + payload`

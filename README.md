@@ -28,7 +28,10 @@ Control a real RC car from anywhere in the world through your browser. This proj
 - **YouTube Live streaming** - Stream to YouTube from admin dashboard (Fly.io restreamer)
 - **Live telemetry overlay** - Race time, throttle & steering displayed on YouTube stream
 - **GPS telemetry** - Real-time position, speed (km/h), and heading from GPS module
-- **Track map overlay** - Mini-map showing live car position on configurable track image
+- **IMU compass (BNO055)** - Stable heading even when stopped (9-DOF fusion)
+- **Heading blending** - Uses IMU at low speed, GPS course when moving fast
+- **Compass HUD** - Video game style horizontal compass strip
+- **Track map overlay** - Mini-map showing live car position and direction arrow
 
 ## How It Works
 
@@ -80,15 +83,23 @@ This project can be adapted for direct Pi control by modifying `control-relay.py
 
 **On the RC Car:**
 
-| Component                 | Purpose                 | Est. Cost |
-| ------------------------- | ----------------------- | --------- |
-| Raspberry Pi Zero 2W      | Video streaming + relay | ~$15      |
-| Pi Camera Module 3 (Wide) | FPV camera              | ~$35      |
-| GPS Module (optional)     | Speed & position data   | ~$10      |
+| Component                 | Purpose                   | Est. Cost |
+| ------------------------- | ------------------------- | --------- |
+| Raspberry Pi Zero 2W      | Video streaming + relay   | ~$15      |
+| Pi Camera Module 3 (Wide) | FPV camera                | ~$35      |
+| GPS Module (optional)     | Speed & position data     | ~$10      |
+| BNO055 IMU (optional)     | Compass heading at rest   | ~$10      |
 
 **Power:** The ARRMA Big Rock ESC has 5V output pins (intended for cooling fans) that can power the Raspberry Pi directly. Connect to GPIO 5V and GND pins. For other setups, use a USB power bank (5V 2A+).
 
 **GPS Module (optional):** Any NMEA-compatible GPS module with serial output (e.g., NEO-6M, NEO-7M, BN-220). Connect TX to Pi GPIO 15 (RX), and power from Pi 3.3V/5V depending on module.
+
+**BNO055 IMU (optional):** 9-DOF IMU for stable compass heading when stationary. Connect via I2C: SDA to Pi GPIO 2, SCL to Pi GPIO 3, VCC to 3.3V, GND to GND. Calibration data auto-saves and restores on reboot. Mount on roof away from motor/ESC for best results.
+
+> **CJMCU-055 / BNO055 Board Setup:**
+>
+> - **I²C mode:** Bridge PS0 and PS1 pads to GND (check board markings)
+> - **COM3/I2C_SEL pin:** Must be tied to GND for standard I²C address (0x28). This is a 5th wire, not a normal I²C signal. If skipped, the device may not appear on the bus.
 
 **On the Transmitter (ARRMA Big Rock setup):**
 

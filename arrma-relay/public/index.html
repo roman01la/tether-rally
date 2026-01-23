@@ -454,14 +454,29 @@
 			}
 			#track-map .car-dot {
 				position: absolute;
-				width: 12px;
-				height: 12px;
-				background: #ff4444;
-				border: 2px solid #fff;
-				border-radius: 50%;
+				width: 18px;
+				height: 18px;
 				transform: translate(-50%, -50%);
-				box-shadow: 0 0 10px rgba(255, 68, 68, 0.8);
 				z-index: 1;
+				filter: drop-shadow(0 0 4px rgba(255, 68, 68, 0.9));
+			}
+			#track-map .car-dot::before {
+				content: '';
+				position: absolute;
+				inset: 0;
+				background: #ff4444;
+				clip-path: polygon(50% 0%, 100% 100%, 50% 70%, 0% 100%);
+			}
+			#track-map .car-dot::after {
+				content: '';
+				position: absolute;
+				top: 2px;
+				left: 50%;
+				transform: translateX(-50%);
+				width: 4px;
+				height: 4px;
+				background: #fff;
+				border-radius: 50%;
 			}
 			#track-map .no-fix {
 				position: absolute;
@@ -493,6 +508,82 @@
 				font-family: monospace;
 				color: rgba(255, 255, 255, 0.7);
 				text-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
+			}
+
+			/* Video game style compass strip */
+			#compass-hud {
+				position: absolute;
+				top: 50px;
+				left: 50%;
+				transform: translateX(-50%);
+				width: 280px;
+				height: 28px;
+				background: rgba(0, 0, 0, 0.5);
+				border-radius: 4px;
+				overflow: hidden;
+				pointer-events: none;
+				z-index: 10;
+				display: none;
+			}
+			#compass-hud.active {
+				display: block;
+			}
+			#compass-strip {
+				position: absolute;
+				top: 0;
+				height: 100%;
+				display: flex;
+				align-items: center;
+				white-space: nowrap;
+				font-family: monospace;
+				font-size: 11px;
+				font-weight: 600;
+				color: rgba(255, 255, 255, 0.5);
+				text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+				will-change: transform;
+			}
+			#compass-strip .cardinal {
+				color: #fff;
+				font-size: 13px;
+				font-weight: 700;
+				padding: 0 1px;
+			}
+			#compass-strip .cardinal.north {
+				color: #ff4444;
+			}
+			#compass-strip .tick {
+				display: inline-block;
+				width: 1px;
+				height: 8px;
+				background: rgba(255, 255, 255, 0.25);
+				margin: 0 11px;
+			}
+			#compass-strip .deg {
+				padding: 0 2px;
+				min-width: 24px;
+				text-align: center;
+			}
+			#compass-center-mark {
+				position: absolute;
+				top: 0;
+				left: 50%;
+				transform: translateX(-50%);
+				width: 2px;
+				height: 100%;
+				background: #ff4444;
+				box-shadow: 0 0 6px rgba(255, 68, 68, 0.8);
+			}
+			#compass-heading {
+				position: absolute;
+				top: 100%;
+				left: 50%;
+				transform: translateX(-50%);
+				margin-top: 2px;
+				font-size: 11px;
+				font-family: monospace;
+				font-weight: 600;
+				color: rgba(255, 255, 255, 0.7);
+				text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
 			}
 
 			/* Race stopped overlay */
@@ -662,6 +753,13 @@
 				<div id="latency">--ms</div>
 			</div>
 
+			<!-- Compass HUD (video game style horizontal strip) -->
+			<div id="compass-hud">
+				<div id="compass-strip"></div>
+				<div id="compass-center-mark"></div>
+				<div id="compass-heading">0°</div>
+			</div>
+
 			<!-- Track Map Overlay -->
 			<div id="track-map">
 				<img id="track-image" src="" alt="Track" />
@@ -827,6 +925,13 @@
 			let gpsSpeed = 0;
 			let gpsHeading = 0;
 			let gpsFix = false;
+
+			// IMU telemetry state
+			let imuHeading = 0; // Blended heading from IMU
+			let imuCalibration = 0; // Packed calibration byte
+			let yawRate = 0; // Yaw rate (deg/sec)
+			let smoothedHeading = 0; // Client-side smoothed for rendering
+			let compassBuilt = false; // Track if compass strip is built
 
 			// Distance tracking (during race)
 			let prevGpsLat = null;
@@ -1384,7 +1489,8 @@
 
 			function handleTelemetry(view) {
 				// Parse telemetry packet
-				// Format: seq(2) + cmd(1) + race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + heading(2) + fix(1)
+				// Old format (24 bytes): seq(2) + cmd(1) + race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + heading(2) + fix(1)
+				// New format (29 bytes): + imu_heading(2) + calibration(1) + yaw_rate(2)
 				const raceTimeMs = view.getUint32(3, true);
 				// const telem_throttle = view.getInt16(7, true);  // Not used currently
 				// const telem_steering = view.getInt16(9, true);  // Not used currently
@@ -1394,8 +1500,25 @@
 				gpsHeading = view.getUint16(21, true) / 100; // Scaled heading back to degrees
 				gpsFix = view.getUint8(23) === 1;
 
-				// Update track map
+				// Parse IMU fields if present (new 29-byte format)
+				if (view.byteLength >= 29) {
+					imuHeading = view.getUint16(24, true) / 100; // Blended heading in degrees
+					imuCalibration = view.getUint8(26); // Packed calibration
+					yawRate = view.getInt16(27, true) / 100; // Yaw rate in deg/sec
+
+					// Smooth heading for rendering (handles wrap-around)
+					smoothedHeading = smoothAngle(smoothedHeading, imuHeading, 0.25);
+				}
+
+				// Update track map and compass
 				updateTrackMap();
+				updateCompassHUD();
+			}
+
+			// Smooth angle transition with wrap-around handling
+			function smoothAngle(current, target, alpha) {
+				const diff = Math.atan2(Math.sin(((target - current) * Math.PI) / 180), Math.cos(((target - current) * Math.PI) / 180));
+				return (current + (alpha * diff * 180) / Math.PI + 360) % 360;
 			}
 
 			// Haversine formula to calculate distance between two GPS points (returns meters)
@@ -1477,6 +1600,73 @@
 
 				carDot.style.left = `${xPercent}%`;
 				carDot.style.top = `${yPercent}%`;
+
+				// Rotate arrow to show heading (0° = North = up)
+				carDot.style.transform = `translate(-50%, -50%) rotate(${smoothedHeading}deg)`;
+			}
+
+			// Build compass strip HTML (called once)
+			function buildCompassStrip(container) {
+				// Build 720° of compass (duplicate for seamless wrapping)
+				// Cardinals every 45°, degrees every 15°
+				const directions = {
+					0: 'N',
+					45: 'NE',
+					90: 'E',
+					135: 'SE',
+					180: 'S',
+					225: 'SW',
+					270: 'W',
+					315: 'NW',
+				};
+
+				let html = '';
+				for (let deg = 0; deg < 720; deg += 15) {
+					const actualDeg = deg % 360;
+					const dir = directions[actualDeg];
+
+					if (dir) {
+						// Cardinal or intercardinal
+						const isNorth = actualDeg === 0;
+						html += `<span class="cardinal${isNorth ? ' north' : ''}">${dir}</span>`;
+					} else {
+						// Degree number
+						html += `<span class="deg">${actualDeg}</span>`;
+					}
+				}
+				container.innerHTML = html;
+			}
+
+			// Update compass HUD display
+			function updateCompassHUD() {
+				const compassHUD = document.getElementById('compass-hud');
+				const compassStrip = document.getElementById('compass-strip');
+				const headingDisplay = document.getElementById('compass-heading');
+
+				// Show compass when we have IMU data
+				if (imuCalibration === 0 && !gpsFix) {
+					compassHUD.classList.remove('active');
+					return;
+				}
+
+				compassHUD.classList.add('active');
+
+				// Build compass strip if not already done
+				if (!compassBuilt) {
+					buildCompassStrip(compassStrip);
+					compassBuilt = true;
+				}
+
+				// Each 15° segment is about 25px wide (adjust based on CSS spacing)
+				// Strip total = 720° = 48 segments
+				const pixelsPerDegree = 25 / 15; // ~1.67 px per degree
+				const offset = smoothedHeading * pixelsPerDegree;
+
+				// Center the strip (140px = half of 280px container width)
+				compassStrip.style.transform = `translateX(${140 - offset}px)`;
+
+				// Show numeric heading
+				headingDisplay.textContent = `${Math.round(smoothedHeading)}°`;
 			}
 
 			function setTrackConfig(config) {

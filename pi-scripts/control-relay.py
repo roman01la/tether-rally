@@ -22,10 +22,12 @@ import hashlib
 import time
 import logging
 import os
+import math
 import serial
 import pynmea2
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
+from bno055_reader import BNO055
 
 logging.basicConfig(
     level=logging.INFO,
@@ -100,6 +102,23 @@ gps_heading = 0.0   # Heading/track in degrees
 gps_fix = False     # Has valid GPS fix
 gps_task = None     # Asyncio task for GPS reading
 
+# IMU (BNO055) state
+imu_heading = 0.0        # BNO055 fused heading (degrees, 0=North)
+imu_yaw_rate = 0.0       # Gyro Z rotation rate (deg/sec)
+imu_calibration = {'sys': 0, 'gyr': 0, 'acc': 0, 'mag': 0}
+imu_valid = False        # BNO055 connected and reading
+blended_heading = 0.0    # Final heading (blended IMU + GPS)
+imu_task = None          # Asyncio task for IMU reading
+
+# Heading blend parameters
+SPEED_THRESHOLD_LOW = 1.0   # km/h - below this, use IMU only
+SPEED_THRESHOLD_HIGH = 5.0  # km/h - above this, blend toward GPS
+HEADING_SMOOTHING = 0.15    # Low-pass filter alpha (0.1-0.3)
+
+# IMU mount offset (degrees to ADD to raw IMU heading to align with car forward)
+# If car points 291° but IMU reads 282°, offset = 291 - 282 = +9
+IMU_MOUNT_OFFSET = 9.0
+
 # Race state: "idle" (controls blocked), "countdown" (controls blocked), "racing" (controls allowed)
 race_state = "idle"
 race_start_time = None  # Unix timestamp when race started (after countdown)
@@ -152,6 +171,10 @@ def broadcast_telemetry():
     """Broadcast telemetry to all connected data channels"""
     global data_channels, race_state, race_start_time, current_throttle, current_steering
     global gps_lat, gps_lon, gps_speed, gps_heading, gps_fix
+    global imu_heading, imu_calibration, imu_yaw_rate, blended_heading
+    
+    # Blend heading before sending
+    blend_heading()
     
     # Calculate race time in milliseconds
     if race_state == "racing" and race_start_time:
@@ -166,13 +189,24 @@ def broadcast_telemetry():
     lat_scaled = int(gps_lat * 1e7)
     lon_scaled = int(gps_lon * 1e7)
     speed_scaled = int(gps_speed * 100)
-    heading_scaled = int(gps_heading * 100)
+    gps_heading_scaled = int(gps_heading * 100)
+    
+    # Scale IMU values
+    imu_heading_scaled = int(blended_heading * 100)  # Send blended as "IMU" heading
+    yaw_rate_scaled = int(max(-327.67, min(327.67, imu_yaw_rate)) * 100)  # Clamp to int16 range
+    
+    # Pack calibration into 1 byte: SSGGAABB (sys, gyr, acc, mag - 2 bits each)
+    cal = imu_calibration
+    cal_packed = ((cal['sys'] & 0x03) << 6) | ((cal['gyr'] & 0x03) << 4) | \
+                 ((cal['acc'] & 0x03) << 2) | (cal['mag'] & 0x03)
     
     # Format: seq(2) + cmd(1) + race_time(4) + throttle(2) + steering(2) + 
-    #         lat(4) + lon(4) + speed(2) + heading(2) + fix(1) = 24 bytes
-    message = struct.pack('<HBIhh iiHHB', 
+    #         lat(4) + lon(4) + speed(2) + gps_heading(2) + fix(1) +
+    #         imu_heading(2) + calibration(1) + yaw_rate(2) = 29 bytes
+    message = struct.pack('<HBIhh iiHHB HBh', 
         0, CMD_TELEM, race_time_ms, current_throttle, current_steering,
-        lat_scaled, lon_scaled, speed_scaled, heading_scaled, 1 if gps_fix else 0
+        lat_scaled, lon_scaled, speed_scaled, gps_heading_scaled, 1 if gps_fix else 0,
+        imu_heading_scaled, cal_packed, yaw_rate_scaled
     )
     
     # Send to all connected data channels
@@ -257,6 +291,141 @@ async def telemetry_broadcast_loop():
         if race_state == "racing":
             broadcast_telemetry()
         await asyncio.sleep(0.1)  # 10Hz
+
+
+# ----- IMU (BNO055) Reading -----
+
+# Calibration file path
+IMU_CALIBRATION_FILE = '/home/pi/bno055_calibration.bin'
+
+def load_imu_calibration() -> bytes | None:
+    """Load saved calibration data from file"""
+    try:
+        with open(IMU_CALIBRATION_FILE, 'rb') as f:
+            data = f.read()
+            if len(data) == 22:
+                logger.info("Loaded IMU calibration from file")
+                return data
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.warning(f"Failed to load IMU calibration: {e}")
+    return None
+
+def save_imu_calibration(data: bytes):
+    """Save calibration data to file"""
+    try:
+        with open(IMU_CALIBRATION_FILE, 'wb') as f:
+            f.write(data)
+        logger.info("Saved IMU calibration to file")
+    except Exception as e:
+        logger.warning(f"Failed to save IMU calibration: {e}")
+
+async def imu_reader_loop():
+    """Read BNO055 heading at 20Hz"""
+    global imu_heading, imu_yaw_rate, imu_calibration, imu_valid
+    
+    # Load saved calibration BEFORE init
+    saved_cal = load_imu_calibration()
+    
+    bno = BNO055()
+    # Pass calibration data to init so it's written before switching to NDOF mode
+    if not await bno.init(calibration_data=saved_cal):
+        logger.warning("BNO055 not available, using GPS heading only")
+        return
+    
+    if saved_cal:
+        logger.info("IMU calibration restored from file")
+    
+    logger.info("BNO055 IMU reader started (20Hz)")
+    
+    # Track calibration state for auto-save
+    last_cal_save_time = 0
+    calibration_saved = saved_cal is not None
+    
+    while True:
+        try:
+            heading = bno.read_heading()
+            if heading is not None:
+                # Apply mount offset and normalize to 0-360
+                imu_heading = (heading + IMU_MOUNT_OFFSET) % 360.0
+                imu_valid = True
+            
+            yaw_rate = bno.read_yaw_rate()
+            if yaw_rate is not None:
+                imu_yaw_rate = yaw_rate
+            
+            imu_calibration = bno.read_calibration()
+            
+            # Auto-save calibration when fully calibrated (all 3s)
+            # Only save once per session to avoid wear
+            import time
+            now = time.time()
+            if (not calibration_saved and 
+                imu_calibration['sys'] == 3 and 
+                imu_calibration['gyr'] == 3 and 
+                imu_calibration['acc'] >= 1 and  # acc can be hard to get to 3
+                imu_calibration['mag'] == 3 and
+                now - last_cal_save_time > 10):  # Rate limit
+                
+                cal_data = bno.read_calibration_data()
+                if cal_data:
+                    save_imu_calibration(cal_data)
+                    calibration_saved = True
+                last_cal_save_time = now
+            
+        except Exception as e:
+            logger.error(f"IMU error: {e}")
+            imu_valid = False
+        
+        await asyncio.sleep(0.05)  # 20Hz
+
+
+def blend_heading():
+    """Blend IMU and GPS heading based on speed"""
+    global blended_heading, imu_heading, gps_heading, gps_speed, imu_valid
+    
+    if not imu_valid:
+        # No IMU - use GPS heading directly
+        blended_heading = gps_heading
+        return
+    
+    if gps_speed < SPEED_THRESHOLD_LOW:
+        # Very slow/stopped - trust IMU completely
+        target = imu_heading
+    elif gps_speed > SPEED_THRESHOLD_HIGH:
+        # Moving fast - blend heavily toward GPS (true motion direction)
+        blend_factor = 0.8  # 80% GPS, 20% IMU
+        target = blend_angles(imu_heading, gps_heading, blend_factor)
+    else:
+        # Transitional speed - linear blend
+        t = (gps_speed - SPEED_THRESHOLD_LOW) / (SPEED_THRESHOLD_HIGH - SPEED_THRESHOLD_LOW)
+        target = blend_angles(imu_heading, gps_heading, t * 0.8)
+    
+    # Smooth the heading change (handles wrap-around)
+    blended_heading = smooth_angle(blended_heading, target, HEADING_SMOOTHING)
+
+
+def blend_angles(a1: float, a2: float, t: float) -> float:
+    """Blend two angles, handling wrap-around. t=0 returns a1, t=1 returns a2"""
+    a1_rad = math.radians(a1)
+    a2_rad = math.radians(a2)
+    
+    # Use vector interpolation to handle wrap
+    x = (1-t) * math.cos(a1_rad) + t * math.cos(a2_rad)
+    y = (1-t) * math.sin(a1_rad) + t * math.sin(a2_rad)
+    
+    return math.degrees(math.atan2(y, x)) % 360
+
+
+def smooth_angle(current: float, target: float, alpha: float) -> float:
+    """Low-pass filter for angles with wrap-around handling"""
+    # Calculate shortest angular difference
+    diff = math.atan2(
+        math.sin(math.radians(target - current)),
+        math.cos(math.radians(target - current))
+    )
+    return (current + alpha * math.degrees(diff)) % 360
 
 # ----- Token Validation -----
 
@@ -618,6 +787,13 @@ async def handle_health(request):
                 "lon": gps_lon,
                 "speed_kmh": round(gps_speed, 2),
                 "heading": round(gps_heading, 1)
+            },
+            "imu": {
+                "valid": imu_valid,
+                "heading": round(imu_heading, 1),
+                "blended_heading": round(blended_heading, 1),
+                "yaw_rate": round(imu_yaw_rate, 1),
+                "calibration": imu_calibration
             }
         },
         headers={"Access-Control-Allow-Origin": "*"}
@@ -810,7 +986,7 @@ async def handle_set_turbo(request):
 # ----- Main -----
 
 async def main():
-    global telemetry_task, gps_task
+    global telemetry_task, gps_task, imu_task
     
     # Load revoked tokens from file
     load_revoked_tokens()
@@ -823,6 +999,9 @@ async def main():
     
     # Start GPS reader loop
     gps_task = asyncio.create_task(gps_reader_loop())
+    
+    # Start IMU (BNO055) reader loop
+    imu_task = asyncio.create_task(imu_reader_loop())
     
     # Start telemetry broadcast loop (10Hz)
     telemetry_task = asyncio.create_task(telemetry_broadcast_loop())
