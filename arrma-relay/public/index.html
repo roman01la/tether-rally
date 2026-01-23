@@ -226,6 +226,18 @@
 				color: rgba(255, 255, 255, 0.6);
 				font-family: monospace;
 			}
+			#hud-clock {
+				position: absolute;
+				top: 15px;
+				left: 15px;
+				font-size: 18px;
+				color: rgba(0, 255, 0, 0.9);
+				font-family: monospace;
+				font-weight: bold;
+				text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
+				z-index: 20;
+				pointer-events: none;
+			}
 			#turbo-btn {
 				position: absolute;
 				bottom: 40px;
@@ -638,6 +650,9 @@
 					<span>Connecting video...</span>
 				</div>
 			</div>
+
+			<!-- HUD Clock (for video latency measurement) -->
+			<div id="hud-clock">00:00:00.000</div>
 
 			<!-- HUD Overlay -->
 			<div id="hud">
@@ -1945,6 +1960,19 @@
 
 			// Initialize thumbs position
 			updateThumbs();
+
+			// HUD clock for video latency measurement
+			const hudClock = document.getElementById('hud-clock');
+			function updateHudClock() {
+				const now = new Date();
+				const h = String(now.getHours()).padStart(2, '0');
+				const m = String(now.getMinutes()).padStart(2, '0');
+				const s = String(now.getSeconds()).padStart(2, '0');
+				const ms = String(now.getMilliseconds()).padStart(3, '0');
+				hudClock.textContent = `${h}:${m}:${s}.${ms}`;
+				requestAnimationFrame(updateHudClock);
+			}
+			updateHudClock();
 		</script>
 	</body>
 </html>

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Video Latency Test</title>
+	<style>
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+		body {
+			background: #000;
+			color: #0f0;
+			font-family: 'Courier New', monospace;
+			min-height: 100vh;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: center;
+			overflow: hidden;
+		}
+		.timestamp {
+			font-size: 15vw;
+			font-weight: bold;
+			letter-spacing: 0.05em;
+			text-shadow: 0 0 20px #0f0, 0 0 40px #0f0;
+		}
+		.milliseconds {
+			font-size: 20vw;
+			font-weight: bold;
+			color: #fff;
+			text-shadow: 0 0 30px #fff, 0 0 60px #0f0;
+			margin-top: 20px;
+		}
+		.label {
+			font-size: 3vw;
+			color: #666;
+			margin-top: 40px;
+		}
+		.instructions {
+			position: fixed;
+			bottom: 20px;
+			font-size: 14px;
+			color: #444;
+			text-align: center;
+			max-width: 600px;
+			padding: 0 20px;
+		}
+		/* Alternating background for frame detection */
+		.frame-indicator {
+			position: fixed;
+			top: 0;
+			left: 0;
+			width: 100px;
+			height: 100px;
+			transition: none;
+		}
+	</style>
+</head>
+<body>
+	<div class="frame-indicator" id="frame-indicator"></div>
+	<div class="timestamp" id="time">00:00:00</div>
+	<div class="milliseconds" id="ms">000</div>
+	<div class="label">Point camera at this screen</div>
+	<div class="instructions">
+		Compare the timestamp in your video feed with this display.<br>
+		Video Latency = (this screen's time) − (time shown in video)
+	</div>
+
+	<script>
+		const timeEl = document.getElementById('time');
+		const msEl = document.getElementById('ms');
+		const frameIndicator = document.getElementById('frame-indicator');
+		
+		// High-precision update loop
+		function update() {
+			const now = new Date();
+			const hours = String(now.getHours()).padStart(2, '0');
+			const mins = String(now.getMinutes()).padStart(2, '0');
+			const secs = String(now.getSeconds()).padStart(2, '0');
+			const ms = String(now.getMilliseconds()).padStart(3, '0');
+			
+			timeEl.textContent = `${hours}:${mins}:${secs}`;
+			msEl.textContent = ms;
+			
+			// Alternating color every 100ms for easier frame matching
+			const colorIndex = Math.floor(now.getMilliseconds() / 100);
+			const colors = ['#f00', '#0f0', '#00f', '#ff0', '#f0f', '#0ff', '#fff', '#f80', '#08f', '#8f0'];
+			frameIndicator.style.background = colors[colorIndex];
+			
+			requestAnimationFrame(update);
+		}
+		
+		update();
+	</script>
+</body>
+</html>

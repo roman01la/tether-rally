@@ -35,14 +35,6 @@ Control a real RC car from anywhere in the world through your browser. This proj
 **For ARRMA Big Rock (2-in-1 ESC/Receiver):**
 
 ```
-Browser ──WebRTC──> Pi (on car) ──WiFi/UDP──> ESP32 (on transmitter) ──DAC──> Transmitter ~~Radio~~> Car
-                      │
-                      └──WebRTC Video──> Browser
-```
-
-**For ARRMA Big Rock (2-in-1 ESC/Receiver):**
-
-```
 Browser ──WebRTC──> Pi (on car) ──WiFi/UDP──> ESP32 ──I2C──> MCP4728 DAC ──Analog──> Transmitter ~~Radio~~> Car
                       │
                       └──WebRTC Video──> Browser
