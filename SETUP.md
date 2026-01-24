@@ -56,6 +56,63 @@ window.RESTREAMER_SECRET = "your-restreamer-control-secret";
 
 ### 4. Raspberry Pi
 
+#### WiFi Setup
+
+The Pi must connect to the **same WiFi network as the ESP32** (typically a mobile hotspot on the car).
+
+**Option A: During OS imaging** - Use Raspberry Pi Imager and configure WiFi in the settings (recommended).
+
+**Option B: NetworkManager (Pi OS Bookworm and newer)**
+
+Modern Raspberry Pi OS uses NetworkManager. Use `nmcli` commands:
+
+```bash
+# List available networks
+sudo nmcli device wifi list
+
+# Connect to a network
+sudo nmcli device wifi connect 'your-wifi-ssid' password 'your-wifi-password'
+
+# List saved connections
+nmcli connection show
+
+# Delete a saved connection
+sudo nmcli connection delete 'old-network-name'
+```
+
+Or use a config file:
+
+```bash
+# Copy example to Pi
+scp pi-scripts/wifi.nmconnection.example pi@your-pi:/tmp/
+
+# On the Pi - install and set permissions
+sudo cp /tmp/wifi.nmconnection.example /etc/NetworkManager/system-connections/YourNetwork.nmconnection
+sudo nano /etc/NetworkManager/system-connections/YourNetwork.nmconnection  # Edit SSID and password
+sudo chmod 600 /etc/NetworkManager/system-connections/YourNetwork.nmconnection
+sudo nmcli connection reload
+sudo nmcli connection up YourNetwork
+```
+
+**Option C: wpa_supplicant (Pi OS Bullseye and older)**
+
+For older Pi OS versions that use wpa_supplicant directly:
+
+```bash
+# Copy from this repo to Pi's boot partition (headless setup)
+cp pi-scripts/wpa_supplicant.example.conf /Volumes/boot/wpa_supplicant.conf
+nano /Volumes/boot/wpa_supplicant.conf  # Edit with your credentials
+```
+
+Or edit directly on the Pi:
+
+```bash
+sudo nano /etc/wpa_supplicant/wpa_supplicant.conf
+sudo wpa_cli -i wlan0 reconfigure
+```
+
+#### Environment Variables
+
 Create environment file on the Pi:
 
 ```bash

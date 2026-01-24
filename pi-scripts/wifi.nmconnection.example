@@ -1,0 +1,30 @@
+# NetworkManager WiFi Configuration (Raspberry Pi OS Bookworm and newer)
+#
+# Copy this file to /etc/NetworkManager/system-connections/YourNetwork.nmconnection
+# IMPORTANT: File must be owned by root with mode 600!
+#
+#   sudo cp wifi.nmconnection.example /etc/NetworkManager/system-connections/YourNetwork.nmconnection
+#   sudo chmod 600 /etc/NetworkManager/system-connections/YourNetwork.nmconnection
+#   sudo nmcli connection reload
+#   sudo nmcli connection up YourNetwork
+#
+# Pi must be on the same network as ESP32 for UDP communication!
+
+[connection]
+id=your-wifi-ssid
+type=wifi
+autoconnect=true
+
+[wifi]
+ssid=your-wifi-ssid
+mode=infrastructure
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=your-wifi-password
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
