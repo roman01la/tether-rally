@@ -1,0 +1,24 @@
+# MediaMTX configuration with Cloudflare TURN
+
+webrtcICEServers2:
+  - url: stun:stun.cloudflare.com:3478
+  - url: turn:turn.cloudflare.com:3478?transport=udp
+    username: ...
+    password: ...
+  - url: turn:turn.cloudflare.com:3478?transport=tcp
+    username: ...
+    password: ...
+  - url: turns:turn.cloudflare.com:443?transport=tcp
+    username: ...
+    password: ...
+
+paths:
+  cam:
+    source: rpiCamera
+    rpiCameraWidth: 1280
+    rpiCameraHeight: 720
+    rpiCameraFPS: 30
+    rpiCameraBitrate: 2000000
+    rpiCameraCodec: hardwareH264
+    rpiCameraIDRPeriod: 30
+    rpiCameraHardwareH264Profile: baseline

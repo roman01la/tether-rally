@@ -742,9 +742,6 @@
 				</div>
 			</div>
 
-			<!-- HUD Clock (for video latency measurement) -->
-			<div id="hud-clock">00:00:00.000</div>
-
 			<!-- HUD Overlay -->
 			<div id="hud">
 				<div id="status" class="disconnected">Disconnected</div>
@@ -1136,11 +1133,25 @@
 						const state = fpvPeerConnection.iceConnectionState;
 						console.log('FPV ICE state:', state);
 						if (state === 'disconnected' || state === 'failed') {
-							videoPlaceholder.innerHTML = '<div class="spinner"></div><span>FPV Disconnected - Reconnecting...</span>';
-							videoPlaceholder.style.display = 'flex';
-							videoConnected = false;
-							sendVideoStatus(false);
-							// Try to reconnect video after a short delay
+							// 'disconnected' can be temporary - check if video is actually playing
+							// Only show overlay if video has truly stopped (no frames for 2s)
+							const checkVideoPlaying = () => {
+								// If video is playing and has recent frames, don't show disconnected overlay
+								if (fpvVideo.srcObject && !fpvVideo.paused && fpvVideo.readyState >= 2) {
+									console.log('FPV ICE disconnected but video still playing, ignoring');
+									return;
+								}
+								// Video actually stopped
+								videoPlaceholder.innerHTML = '<div class="spinner"></div><span>FPV Disconnected - Reconnecting...</span>';
+								videoPlaceholder.style.display = 'flex';
+								videoConnected = false;
+								sendVideoStatus(false);
+							};
+
+							// Wait a moment before declaring disconnected (ICE can recover quickly)
+							setTimeout(checkVideoPlaying, 1000);
+
+							// Try to reconnect video after a longer delay if still disconnected
 							setTimeout(() => {
 								if (
 									!fpvPeerConnection ||
@@ -1151,6 +1162,13 @@
 									startFpvStream();
 								}
 							}, 3000);
+						} else if (state === 'connected' || state === 'completed') {
+							// ICE reconnected - hide overlay if video is playing
+							if (fpvVideo.srcObject && !fpvVideo.paused) {
+								videoPlaceholder.style.display = 'none';
+								videoConnected = true;
+								sendVideoStatus(true);
+							}
 						}
 					};
 
@@ -1687,6 +1705,8 @@
 			// ==================================
 
 			// ===== WebRTC DataChannel for Controls =====
+			let iceRecoveryTimeout = null; // Track the reconnect timeout
+
 			async function startControlChannel() {
 				const iceServers = await getIceServers();
 
@@ -1698,6 +1718,21 @@
 					const state = controlPc.iceConnectionState;
 
 					if (state === 'connected' || state === 'completed') {
+						// Cancel any pending reconnect timeout
+						if (iceRecoveryTimeout) {
+							clearTimeout(iceRecoveryTimeout);
+							iceRecoveryTimeout = null;
+							console.log('ICE recovered, cancelled reconnect');
+						}
+
+						// Restore UI if DataChannel is still open
+						if (controlChannel && controlChannel.readyState === 'open') {
+							isConnected = true;
+							setStatus('connected', 'Connected');
+							throttleZone.classList.remove('disabled');
+							steeringZone.classList.remove('disabled');
+						}
+
 						// Log the selected candidate pair
 						controlPc.getStats().then((stats) => {
 							stats.forEach((report) => {
@@ -1718,8 +1753,10 @@
 						setStatus('disconnected', 'Connection Lost');
 						throttleZone.classList.add('disabled');
 						steeringZone.classList.add('disabled');
-						// Give ICE a chance to recover
-						setTimeout(() => {
+						// Give ICE a chance to recover (cancel any existing timeout first)
+						if (iceRecoveryTimeout) clearTimeout(iceRecoveryTimeout);
+						iceRecoveryTimeout = setTimeout(() => {
+							iceRecoveryTimeout = null;
 							if (controlPc && controlPc.iceConnectionState === 'disconnected') {
 								console.log('ICE did not recover, reconnecting...');
 								reconnectControl();
@@ -1728,6 +1765,10 @@
 					} else if (state === 'failed') {
 						// Connection failed - reconnect
 						console.error('Control connection failed');
+						if (iceRecoveryTimeout) {
+							clearTimeout(iceRecoveryTimeout);
+							iceRecoveryTimeout = null;
+						}
 						isConnected = false;
 						setStatus('disconnected', 'Connection Failed');
 						throttleZone.classList.add('disabled');
@@ -1861,6 +1902,10 @@
 			function stopControlChannel() {
 				clearInterval(controlInterval);
 				clearInterval(pingInterval);
+				if (iceRecoveryTimeout) {
+					clearTimeout(iceRecoveryTimeout);
+					iceRecoveryTimeout = null;
+				}
 				if (controlChannel) {
 					controlChannel.close();
 					controlChannel = null;

@@ -29,7 +29,7 @@ fi
 if [ "$HAS_NMCONNECTION" = false ] && [ "$HAS_WPA" = false ]; then
     echo "Error: No WiFi config files found!"
     echo "Create wifi.nmconnection (from wifi.nmconnection.example) or"
-    echo "wpa_supplicant.conf (from wpa_supplicant.example.conf)"
+    echo "wpa_supplicant.conf (from wpa_supplicant.conf.example)"
     exit 1
 fi
 

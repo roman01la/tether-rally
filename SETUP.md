@@ -100,7 +100,7 @@ For older Pi OS versions that use wpa_supplicant directly:
 
 ```bash
 # Copy from this repo to Pi's boot partition (headless setup)
-cp pi-scripts/wpa_supplicant.example.conf /Volumes/boot/wpa_supplicant.conf
+cp pi-scripts/wpa_supplicant.conf.example /Volumes/boot/wpa_supplicant.conf
 nano /Volumes/boot/wpa_supplicant.conf  # Edit with your credentials
 ```
 
