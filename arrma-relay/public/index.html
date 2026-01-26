@@ -6,6 +6,24 @@
 		<link rel="shortcut icon" href="/icon_xs.png" />
 		<title>Tether Rally</title>
 		<style>
+			:root {
+				--color-success: #40916c;
+				--color-success-light: #52b788;
+				--color-success-dark: #2d6a4f;
+				--color-error: #e63946;
+				--color-warning: #e85d04;
+				--color-turbo: #ff8c00;
+				--color-turbo-border: #ffa500;
+				--color-panel-bg: rgba(30, 30, 50, 0.7);
+				--color-panel-hover: rgba(50, 50, 80, 0.8);
+				--color-border: rgba(100, 100, 140, 0.5);
+				--color-border-light: rgba(150, 150, 200, 0.5);
+				--color-text-muted: rgba(255, 255, 255, 0.7);
+				--color-bg-dark: #1a1a2e;
+				--color-bg-darker: #16213e;
+				--color-accent: #5a5a8a;
+				--color-accent-light: #7a7aba;
+			}
 			* {
 				box-sizing: border-box;
 				margin: 0;
@@ -32,7 +50,7 @@
 				align-items: center;
 				justify-content: flex-start;
 				gap: 20px;
-				background: #1a1a2e;
+				background: var(--color-bg-dark);
 				z-index: 100;
 				overflow-y: auto;
 				padding: 20px;
@@ -50,7 +68,7 @@
 				font-size: 16px;
 				border: 2px solid #3a3a5a;
 				border-radius: 10px;
-				background: #16213e;
+				background: var(--color-bg-darker);
 				color: #eee;
 				width: 280px;
 				text-align: center;
@@ -65,20 +83,20 @@
 				font-size: 16px;
 				border: none;
 				border-radius: 10px;
-				background: #2d6a4f;
+				background: var(--color-success-dark);
 				color: #eee;
 				cursor: pointer;
 				font-weight: 600;
 			}
 			#login-screen button:hover {
-				background: #40916c;
+				background: var(--color-success);
 			}
 			#login-screen button:disabled {
 				background: #3a3a5a;
 				cursor: not-allowed;
 			}
 			#login-error {
-				color: #e63946;
+				color: var(--color-error);
 				font-size: 14px;
 				min-height: 20px;
 			}
@@ -88,12 +106,12 @@
 				margin-top: -10px;
 			}
 			#device-status.online {
-				color: #40916c;
+				color: var(--color-success);
 			}
 			.info-section {
 				max-width: 400px;
 				padding: 20px 20px 12px;
-				background: #16213e;
+				background: var(--color-bg-darker);
 				border-radius: 12px;
 				text-align: left;
 			}
@@ -122,7 +140,7 @@
 				color: #aaa;
 			}
 			.info-section .highlight {
-				color: #40916c;
+				color: var(--color-success);
 			}
 
 			/* Control screen - racing game style */
@@ -213,6 +231,33 @@
 			#status.connecting {
 				background: rgba(232, 93, 4, 0.9);
 			}
+
+			/* Shared control button styles */
+			.control-btn {
+				position: absolute;
+				bottom: 40px;
+				transform: translateX(-50%);
+				padding: 12px 24px;
+				border-radius: 30px;
+				border: 2px solid var(--color-border);
+				background: var(--color-panel-bg);
+				color: var(--color-text-muted);
+				font-size: 14px;
+				font-weight: 600;
+				cursor: pointer;
+				backdrop-filter: blur(10px);
+				-webkit-backdrop-filter: blur(10px);
+				transition: all 0.2s;
+				z-index: 20;
+			}
+			.control-btn:hover {
+				background: var(--color-panel-hover);
+				border-color: var(--color-border-light);
+			}
+			.control-btn.disabled {
+				opacity: 0.3;
+				pointer-events: none;
+			}
 			#status.waiting {
 				background: rgba(100, 100, 120, 0.9);
 			}
@@ -239,66 +284,20 @@
 				pointer-events: none;
 			}
 			#turbo-btn {
-				position: absolute;
-				bottom: 40px;
 				left: calc(50% + 80px);
-				transform: translateX(-50%);
-				padding: 12px 24px;
-				border-radius: 30px;
-				border: 2px solid rgba(100, 100, 140, 0.5);
-				background: rgba(30, 30, 50, 0.7);
-				color: rgba(255, 255, 255, 0.7);
-				font-size: 14px;
-				font-weight: 600;
-				cursor: pointer;
-				backdrop-filter: blur(10px);
-				-webkit-backdrop-filter: blur(10px);
-				transition: all 0.2s;
-				z-index: 20;
+			}
+			#turbo-btn.active {
+				background: rgba(255, 140, 0, 0.9);
+				border-color: var(--color-turbo-border);
+				color: #000;
 			}
 			#traction-btn {
-				position: absolute;
-				bottom: 40px;
 				left: calc(50% - 80px);
-				transform: translateX(-50%);
-				padding: 12px 24px;
-				border-radius: 30px;
-				border: 2px solid rgba(100, 100, 140, 0.5);
-				background: rgba(30, 30, 50, 0.7);
-				color: rgba(255, 255, 255, 0.7);
-				font-size: 14px;
-				font-weight: 600;
-				cursor: pointer;
-				backdrop-filter: blur(10px);
-				-webkit-backdrop-filter: blur(10px);
-				transition: all 0.2s;
-				z-index: 20;
-			}
-			#traction-btn:hover {
-				background: rgba(50, 50, 80, 0.8);
-				border-color: rgba(150, 150, 200, 0.5);
 			}
 			#traction-btn.active {
 				background: rgba(64, 145, 108, 0.9);
 				border-color: rgba(82, 183, 136, 0.8);
 				color: #fff;
-			}
-			#traction-btn.disabled {
-				opacity: 0.3;
-				pointer-events: none;
-			}
-			#turbo-btn:hover {
-				background: rgba(50, 50, 80, 0.8);
-				border-color: rgba(150, 150, 200, 0.5);
-			}
-			#turbo-btn.active {
-				background: rgba(255, 140, 0, 0.9);
-				border-color: rgba(255, 165, 0, 0.8);
-				color: #000;
-			}
-			#turbo-btn.disabled {
-				opacity: 0.3;
-				pointer-events: none;
 			}
 			@keyframes turbo-pulse {
 				0% {
@@ -407,18 +406,22 @@
 				pointer-events: none;
 			}
 
-			/* Countdown overlay */
-			#countdown-overlay {
+			/* Shared fullscreen overlay styles */
+			.fullscreen-overlay {
 				position: absolute;
 				inset: 0;
 				display: none;
 				align-items: center;
 				justify-content: center;
-				background: rgba(0, 0, 0, 0.7);
 				z-index: 50;
 			}
-			#countdown-overlay.active {
+			.fullscreen-overlay.active {
 				display: flex;
+			}
+
+			/* Countdown overlay */
+			#countdown-overlay {
+				background: rgba(0, 0, 0, 0.7);
 			}
 			#countdown-number {
 				font-size: 200px;
@@ -453,7 +456,7 @@
 				font-weight: 700;
 				font-family: monospace;
 				background: rgba(0, 0, 0, 0.5);
-				color: #40916c;
+				color: var(--color-success);
 				display: none;
 			}
 			#race-timer.active {
@@ -608,16 +611,7 @@
 
 			/* Race stopped overlay */
 			#stopped-overlay {
-				position: absolute;
-				inset: 0;
-				display: none;
-				align-items: center;
-				justify-content: center;
 				background: rgba(0, 0, 0, 0.8);
-				z-index: 50;
-			}
-			#stopped-overlay.active {
-				display: flex;
 			}
 			#stopped-content {
 				display: flex;
@@ -628,7 +622,7 @@
 			#stopped-text {
 				font-size: 60px;
 				font-weight: 700;
-				color: #e63946;
+				color: var(--color-error);
 				text-shadow: 0 0 40px rgba(230, 57, 70, 0.5);
 				animation: stopped-flash 0.5s ease-out;
 			}
@@ -636,7 +630,7 @@
 				font-size: 72px;
 				font-weight: 700;
 				font-family: monospace;
-				color: #40916c;
+				color: var(--color-success);
 				text-shadow: 0 0 30px rgba(64, 145, 108, 0.5);
 				animation: stopped-flash 0.5s ease-out 0.2s both;
 			}
@@ -653,17 +647,9 @@
 
 			/* Waiting for race overlay */
 			#waiting-overlay {
-				position: absolute;
-				inset: 0;
-				display: none;
-				align-items: center;
-				justify-content: center;
 				background: rgba(0, 0, 0, 0.6);
 				z-index: 45;
 				pointer-events: none;
-			}
-			#waiting-overlay.active {
-				display: flex;
 			}
 			#waiting-content {
 				display: flex;
@@ -692,7 +678,7 @@
 				font-weight: 700;
 				border: none;
 				border-radius: 16px;
-				background: #40916c;
+				background: var(--color-success);
 				color: white;
 				cursor: pointer;
 				text-transform: uppercase;
@@ -703,7 +689,7 @@
 				box-shadow: 0 4px 15px rgba(64, 145, 108, 0.4);
 			}
 			#ready-btn:hover:not(:disabled) {
-				background: #52b788;
+				background: var(--color-success-light);
 				transform: translateY(-2px);
 				box-shadow: 0 6px 20px rgba(64, 145, 108, 0.5);
 			}
@@ -715,6 +701,66 @@
 				color: #888;
 				cursor: not-allowed;
 				box-shadow: none;
+			}
+
+			/* Track Map Modal */
+			#track-modal {
+				position: fixed;
+				inset: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				background: rgba(0, 0, 0, 0.85);
+				z-index: 200;
+			}
+			#track-modal.hidden {
+				display: none;
+			}
+			#track-modal-content {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: 20px;
+				max-width: 90vw;
+				max-height: 90vh;
+			}
+			#track-modal-content img {
+				max-width: 100%;
+				max-height: 70vh;
+				border-radius: 12px;
+				box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+			}
+			#track-modal-content h2 {
+				color: #eee;
+				font-size: 24px;
+				font-weight: 600;
+			}
+			#track-modal-actions {
+				display: flex;
+				gap: 15px;
+				align-items: center;
+			}
+			#track-modal-close {
+				padding: 12px 40px;
+				font-size: 16px;
+				border: none;
+				border-radius: 10px;
+				background: var(--color-success-dark);
+				color: #eee;
+				cursor: pointer;
+				font-weight: 600;
+			}
+			#track-modal-close:hover {
+				background: var(--color-success);
+			}
+			#track-modal-link {
+				color: var(--color-accent);
+				text-decoration: none;
+				font-size: 14px;
+			}
+			#track-modal-link:hover {
+				color: var(--color-accent-light);
+				text-decoration: underline;
 			}
 		</style>
 	</head>
@@ -787,12 +833,12 @@
 			</div>
 
 			<!-- Countdown Overlay -->
-			<div id="countdown-overlay">
+			<div id="countdown-overlay" class="fullscreen-overlay">
 				<div id="countdown-number">3</div>
 			</div>
 
 			<!-- Race Stopped Overlay -->
-			<div id="stopped-overlay">
+			<div id="stopped-overlay" class="fullscreen-overlay">
 				<div id="stopped-content">
 					<div id="stopped-text">FINISH</div>
 					<div id="stopped-time">00:00.000</div>
@@ -800,7 +846,7 @@
 			</div>
 
 			<!-- Waiting for Race Overlay -->
-			<div id="waiting-overlay">
+			<div id="waiting-overlay" class="fullscreen-overlay">
 				<div id="waiting-content">
 					<div id="waiting-spinner"></div>
 					<div id="waiting-text">Waiting for race</div>
@@ -828,8 +874,8 @@
 			<div id="instructions">WASD / Arrow keys | E = Turbo | Q = Traction</div>
 
 			<!-- Control Buttons -->
-			<button id="traction-btn" class="disabled" onclick="toggleTraction()">🛞 TC (Q)</button>
-			<button id="turbo-btn" class="disabled" onclick="toggleTurbo()">🚀 TURBO (E)</button>
+			<button id="traction-btn" class="control-btn disabled" onclick="toggleTraction()">🛞 TC (Q)</button>
+			<button id="turbo-btn" class="control-btn disabled" onclick="toggleTurbo()">🚀 TURBO (E)</button>
 		</div>
 
 		<!-- Optional: Load config.js for deployment-specific URLs -->
@@ -854,6 +900,24 @@
 			// Production: Your control tunnel URL (e.g., https://control.yourdomain.com)
 			const CONTROL_URL = DEV ? 'http://localhost:8890' : window.CONTROL_URL || '';
 			// =========================
+
+			// ===== TIMING CONSTANTS =====
+			const CONTROL_INTERVAL_MS = 20; // 50Hz control loop
+			const PING_INTERVAL_MS = 500;
+			const DEVICE_CHECK_INTERVAL_MS = 5000;
+			const ICE_RECOVERY_TIMEOUT_MS = 5000;
+			const ICE_GATHERING_TIMEOUT_MS = 2000;
+			const VIDEO_RECONNECT_DELAY_MS = 3000;
+			const VIDEO_CHECK_DELAY_MS = 1000;
+			const TURN_CREDENTIAL_REFRESH_MS = 12 * 60 * 60 * 1000; // 12 hours
+			const MAX_RECONNECT_DELAY_MS = 30000;
+			const COUNTDOWN_STEP_MS = 1000;
+			const COUNTDOWN_GO_MS = 3000;
+			const COUNTDOWN_HIDE_MS = 3500;
+			const FINISH_DISPLAY_MS = 4000;
+			// ============================
+
+			// ===== PROTOCOL CONSTANTS =====
 
 			const CMD_PING = 0x00;
 			const CMD_CTRL = 0x01;
@@ -888,7 +952,7 @@
 					console.log('Sent video status:', connected);
 					// Enable ready button when video is connected
 					if (connected && !playerReady) {
-						document.getElementById('ready-btn').disabled = false;
+						readyBtn.disabled = false;
 					}
 				}
 			}
@@ -903,11 +967,10 @@
 					view.setUint8(4, 1);
 					controlChannel.send(buf);
 					playerReady = true;
-					const btn = document.getElementById('ready-btn');
-					btn.textContent = '✓ Ready';
-					btn.classList.add('ready');
-					btn.disabled = true;
-					document.getElementById('waiting-text').textContent = 'Waiting for admin';
+					readyBtn.textContent = '✓ Ready';
+					readyBtn.classList.add('ready');
+					readyBtn.disabled = true;
+					waitingText.textContent = 'Waiting for admin';
 					console.log('Sent ready status');
 				}
 			}
@@ -991,6 +1054,10 @@
 			const raceTimerEl = document.getElementById('race-timer');
 			const stoppedOverlay = document.getElementById('stopped-overlay');
 			const waitingOverlay = document.getElementById('waiting-overlay');
+			const readyBtn = document.getElementById('ready-btn');
+			const waitingText = document.getElementById('waiting-text');
+			const turboBtn = document.getElementById('turbo-btn');
+			const tractionBtn = document.getElementById('traction-btn');
 
 			let throttleTouchId = null;
 			let steeringTouchId = null;
@@ -998,6 +1065,47 @@
 			let steeringTouchOrigin = null;
 			let mouseThrOrigin = null;
 			let mouseStrOrigin = null;
+
+			// ===== HELPER FUNCTIONS =====
+			// Format milliseconds to MM:SS.mmm
+			function formatTime(ms) {
+				const mins = Math.floor(ms / 60000);
+				const secs = Math.floor((ms % 60000) / 1000);
+				const millis = ms % 1000;
+				return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
+			}
+
+			// Create a binary packet with auto-incrementing sequence
+			function createPacket(cmd, payloadSize = 0) {
+				controlSeq = (controlSeq + 1) & 0xffff;
+				const buf = new ArrayBuffer(3 + payloadSize);
+				const view = new DataView(buf);
+				view.setUint16(0, controlSeq, true);
+				view.setUint8(2, cmd);
+				return { buf, view };
+			}
+
+			// Reset throttle state
+			function resetThrottle() {
+				throttleTouchId = null;
+				throttleTouchOrigin = null;
+				mouseThrOrigin = null;
+				throttleZone.classList.remove('active');
+				thrSlider = 0;
+				thr = 0;
+				sendControl();
+			}
+
+			// Reset steering state
+			function resetSteering() {
+				steeringTouchId = null;
+				steeringTouchOrigin = null;
+				mouseStrOrigin = null;
+				steeringZone.classList.remove('active');
+				str = 0;
+				sendControl();
+			}
+			// ============================
 
 			// Check device status from control relay health endpoint
 			async function checkDeviceStatus() {
@@ -1015,7 +1123,7 @@
 
 			// Check status on load and periodically
 			checkDeviceStatus();
-			setInterval(checkDeviceStatus, 5000);
+			setInterval(checkDeviceStatus, DEVICE_CHECK_INTERVAL_MS);
 
 			// Load track config from window.TRACK_CONFIG if set in config.js
 			if (window.TRACK_CONFIG) {
@@ -1114,12 +1222,9 @@
 						const data = await response.json();
 						cachedIceServers = data.iceServers;
 						// Refresh credentials after 12 hours (they last 24h)
-						setTimeout(
-							() => {
-								cachedIceServers = null;
-							},
-							12 * 60 * 60 * 1000,
-						);
+						setTimeout(() => {
+							cachedIceServers = null;
+						}, TURN_CREDENTIAL_REFRESH_MS);
 						console.log('Got Cloudflare TURN credentials');
 						return cachedIceServers;
 					}
@@ -1149,7 +1254,7 @@
 						sendVideoStatus(true);
 						// Enable ready button when video connects (if not already ready)
 						if (!playerReady) {
-							document.getElementById('ready-btn').disabled = false;
+							readyBtn.disabled = false;
 						}
 					};
 
@@ -1173,7 +1278,7 @@
 							};
 
 							// Wait a moment before declaring disconnected (ICE can recover quickly)
-							setTimeout(checkVideoPlaying, 1000);
+							setTimeout(checkVideoPlaying, VIDEO_CHECK_DELAY_MS);
 
 							// Try to reconnect video after a longer delay if still disconnected
 							setTimeout(() => {
@@ -1185,7 +1290,7 @@
 									console.log('Reconnecting FPV stream...');
 									startFpvStream();
 								}
-							}, 3000);
+							}, VIDEO_RECONNECT_DELAY_MS);
 						} else if (state === 'connected' || state === 'completed') {
 							// ICE reconnected - hide overlay if video is playing
 							if (fpvVideo.srcObject && !fpvVideo.paused) {
@@ -1214,7 +1319,7 @@
 						const timeout = setTimeout(() => {
 							console.log('ICE gathering timeout, proceeding with available candidates');
 							resolve();
-						}, 2000); // 2 second max wait
+						}, ICE_GATHERING_TIMEOUT_MS); // 2 second max wait
 
 						fpvPeerConnection.onicegatheringstatechange = () => {
 							if (fpvPeerConnection.iceGatheringState === 'complete') {
@@ -1357,14 +1462,14 @@
 					countdownNumber.style.animation = 'none';
 					countdownNumber.offsetHeight; // Trigger reflow
 					countdownNumber.style.animation = '';
-				}, 1000);
+				}, COUNTDOWN_STEP_MS);
 
 				setTimeout(() => {
 					countdownNumber.textContent = '1';
 					countdownNumber.style.animation = 'none';
 					countdownNumber.offsetHeight; // Trigger reflow
 					countdownNumber.style.animation = '';
-				}, 2000);
+				}, COUNTDOWN_STEP_MS * 2);
 
 				setTimeout(() => {
 					countdownNumber.textContent = 'GO!';
@@ -1372,12 +1477,12 @@
 					countdownNumber.style.animation = 'none';
 					countdownNumber.offsetHeight; // Trigger reflow
 					countdownNumber.style.animation = '';
-				}, 3000);
+				}, COUNTDOWN_GO_MS);
 
 				setTimeout(() => {
 					countdownOverlay.classList.remove('active');
 					startRaceTimer();
-				}, 3500);
+				}, COUNTDOWN_HIDE_MS);
 			}
 
 			function startRaceTimer() {
@@ -1391,10 +1496,7 @@
 			function updateRaceTimer() {
 				if (!raceStartTime) return;
 				const elapsed = Date.now() - raceStartTime;
-				const mins = Math.floor(elapsed / 60000);
-				const secs = Math.floor((elapsed % 60000) / 1000);
-				const ms = elapsed % 1000;
-				raceTimerEl.textContent = String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0') + '.' + String(ms).padStart(3, '0');
+				raceTimerEl.textContent = formatTime(elapsed);
 			}
 
 			function stopRaceTimer() {
@@ -1441,10 +1543,7 @@
 						let finalTime = '00:00.000';
 						if (raceStartTime) {
 							const elapsed = Date.now() - raceStartTime;
-							const mins = Math.floor(elapsed / 60000);
-							const secs = Math.floor((elapsed % 60000) / 1000);
-							const ms = elapsed % 1000;
-							finalTime = String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0') + '.' + String(ms).padStart(3, '0');
+							finalTime = formatTime(elapsed);
 						}
 
 						stopRaceTimer();
@@ -1456,7 +1555,7 @@
 						setTimeout(() => {
 							stoppedOverlay.classList.remove('active');
 							waitingOverlay.classList.add('active'); // Show waiting overlay after finish fades
-						}, 4000); // Show longer so they can see the time
+						}, FINISH_DISPLAY_MS); // Show longer so they can see the time
 						break;
 				}
 			}
@@ -1473,81 +1572,57 @@
 				}
 			}
 
-			function updateTurboIndicator() {
-				const turboBtn = document.getElementById('turbo-btn');
-				if (turboMode) {
-					turboBtn.classList.add('active');
-				} else {
-					turboBtn.classList.remove('active');
-				}
+			// ===== TOGGLE FEATURE FACTORY =====
+			// Creates reusable toggle functions for turbo/traction-like features
+			function createToggleFeature(name, cmd, btnEl) {
+				return {
+					updateIndicator(mode) {
+						btnEl.classList.toggle('active', mode);
+					},
+					send(enabled) {
+						if (controlChannel && controlChannel.readyState === 'open') {
+							const { buf, view } = createPacket(cmd, 1);
+							view.setUint8(3, enabled ? 1 : 0);
+							controlChannel.send(buf);
+							console.log(`Sent ${name}:`, enabled, 'seq:', controlSeq);
+						}
+					},
+					updateButton() {
+						btnEl.classList.toggle('disabled', !isConnected);
+					},
+				};
 			}
 
-			function sendTurbo(enabled) {
-				if (controlChannel && controlChannel.readyState === 'open') {
-					controlSeq = (controlSeq + 1) & 0xffff;
-					const buf = new ArrayBuffer(4);
-					const view = new DataView(buf);
-					view.setUint16(0, controlSeq, true);
-					view.setUint8(2, CMD_TURBO);
-					view.setUint8(3, enabled ? 1 : 0);
-					controlChannel.send(buf);
-					console.log('Sent turbo:', enabled, 'seq:', controlSeq);
-				}
+			// Create turbo and traction toggle features
+			const turboFeature = createToggleFeature('turbo', CMD_TURBO, turboBtn);
+			const tractionFeature = createToggleFeature('traction', CMD_TRACTION, tractionBtn);
+
+			// Convenience functions for backward compatibility
+			function updateTurboIndicator() {
+				turboFeature.updateIndicator(turboMode);
+			}
+			function updateTractionIndicator() {
+				tractionFeature.updateIndicator(tractionMode);
+			}
+			function updateTurboButton() {
+				turboFeature.updateButton();
+			}
+			function updateTractionButton() {
+				tractionFeature.updateButton();
 			}
 
 			function toggleTurbo() {
 				if (!isConnected) return;
 				turboMode = !turboMode;
-				sendTurbo(turboMode);
+				turboFeature.send(turboMode);
 				updateTurboIndicator();
-			}
-
-			function updateTurboButton() {
-				const turboBtn = document.getElementById('turbo-btn');
-				if (isConnected) {
-					turboBtn.classList.remove('disabled');
-				} else {
-					turboBtn.classList.add('disabled');
-				}
-			}
-
-			// Traction control functions
-			function updateTractionIndicator() {
-				const tractionBtn = document.getElementById('traction-btn');
-				if (tractionMode) {
-					tractionBtn.classList.add('active');
-				} else {
-					tractionBtn.classList.remove('active');
-				}
-			}
-
-			function sendTraction(enabled) {
-				if (controlChannel && controlChannel.readyState === 'open') {
-					controlSeq = (controlSeq + 1) & 0xffff;
-					const buf = new ArrayBuffer(4);
-					const view = new DataView(buf);
-					view.setUint16(0, controlSeq, true);
-					view.setUint8(2, CMD_TRACTION);
-					view.setUint8(3, enabled ? 1 : 0);
-					controlChannel.send(buf);
-					console.log('Sent traction:', enabled, 'seq:', controlSeq);
-				}
 			}
 
 			function toggleTraction() {
 				if (!isConnected) return;
 				tractionMode = !tractionMode;
-				sendTraction(tractionMode);
+				tractionFeature.send(tractionMode);
 				updateTractionIndicator();
-			}
-
-			function updateTractionButton() {
-				const tractionBtn = document.getElementById('traction-btn');
-				if (isConnected) {
-					tractionBtn.classList.remove('disabled');
-				} else {
-					tractionBtn.classList.add('disabled');
-				}
 			}
 
 			function handleKicked() {
@@ -1557,11 +1632,10 @@
 				stopControlChannel();
 				// Reset ready state
 				playerReady = false;
-				const readyBtn = document.getElementById('ready-btn');
 				readyBtn.textContent = 'Ready';
 				readyBtn.classList.remove('ready');
 				readyBtn.disabled = true;
-				document.getElementById('waiting-text').textContent = 'Waiting for race';
+				waitingText.textContent = 'Waiting for race';
 				// Clear token so they can't auto-reconnect
 				currentToken = null;
 				// Show kicked message
@@ -1834,7 +1908,7 @@
 								console.log('ICE did not recover, reconnecting...');
 								reconnectControl();
 							}
-						}, 5000);
+						}, ICE_RECOVERY_TIMEOUT_MS);
 					} else if (state === 'failed') {
 						// Connection failed - reconnect
 						console.error('Control connection failed');
@@ -1867,9 +1941,9 @@
 					// Show waiting overlay until race starts
 					waitingOverlay.classList.add('active');
 					// Start 50Hz control loop
-					controlInterval = setInterval(sendControl, 20);
+					controlInterval = setInterval(sendControl, CONTROL_INTERVAL_MS);
 					// Start ping for latency measurement
-					pingInterval = setInterval(sendPing, 500);
+					pingInterval = setInterval(sendPing, PING_INTERVAL_MS);
 					updateTurboButton();
 					updateTractionButton();
 				};
@@ -1928,7 +2002,7 @@
 					const timeout = setTimeout(() => {
 						console.log('ICE gathering timeout, proceeding');
 						resolve();
-					}, 2000);
+					}, ICE_GATHERING_TIMEOUT_MS);
 					controlPc.onicegatheringstatechange = () => {
 						if (controlPc.iceGatheringState === 'complete') {
 							clearTimeout(timeout);
@@ -1975,13 +2049,12 @@
 
 			// Reconnect control channel after connection loss
 			let reconnectAttempt = 0;
-			const MAX_RECONNECT_DELAY = 30000;
 
 			async function reconnectControl() {
 				stopControlChannel();
 
 				// Exponential backoff: 1s, 2s, 4s, 8s... max 30s
-				const delay = Math.min(1000 * Math.pow(2, reconnectAttempt), MAX_RECONNECT_DELAY);
+				const delay = Math.min(1000 * Math.pow(2, reconnectAttempt), MAX_RECONNECT_DELAY_MS);
 				reconnectAttempt++;
 
 				console.log(`Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempt})...`);
@@ -2109,18 +2182,9 @@
 			document.addEventListener('touchend', (e) => {
 				for (const touch of e.changedTouches) {
 					if (touch.identifier === throttleTouchId) {
-						throttleTouchId = null;
-						throttleTouchOrigin = null;
-						throttleZone.classList.remove('active');
-						thrSlider = 0;
-						thr = 0;
-						sendControl();
+						resetThrottle();
 					} else if (touch.identifier === steeringTouchId) {
-						steeringTouchId = null;
-						steeringTouchOrigin = null;
-						steeringZone.classList.remove('active');
-						str = 0;
-						sendControl();
+						resetSteering();
 					}
 				}
 			});
@@ -2128,18 +2192,9 @@
 			document.addEventListener('touchcancel', (e) => {
 				for (const touch of e.changedTouches) {
 					if (touch.identifier === throttleTouchId) {
-						throttleTouchId = null;
-						throttleTouchOrigin = null;
-						throttleZone.classList.remove('active');
-						thrSlider = 0;
-						thr = 0;
-						sendControl();
+						resetThrottle();
 					} else if (touch.identifier === steeringTouchId) {
-						steeringTouchId = null;
-						steeringTouchOrigin = null;
-						steeringZone.classList.remove('active');
-						str = 0;
-						sendControl();
+						resetSteering();
 					}
 				}
 			});
@@ -2170,18 +2225,11 @@
 			document.addEventListener('mouseup', () => {
 				if (mouseOnThrottle) {
 					mouseOnThrottle = false;
-					mouseThrOrigin = null;
-					throttleZone.classList.remove('active');
-					thrSlider = 0;
-					thr = 0;
-					sendControl();
+					resetThrottle();
 				}
 				if (mouseOnSteering) {
 					mouseOnSteering = false;
-					mouseStrOrigin = null;
-					steeringZone.classList.remove('active');
-					str = 0;
-					sendControl();
+					resetSteering();
 				}
 			});
 
