@@ -1247,6 +1247,13 @@
 
 					fpvPeerConnection.ontrack = (event) => {
 						fpvVideo.srcObject = event.streams[0];
+
+						// Minimize jitter buffer for lowest latency (may cause glitches on bad network)
+						const receiver = event.receiver;
+						if (receiver && 'playoutDelayHint' in receiver) {
+							receiver.playoutDelayHint = 0; // Request minimum buffering
+						}
+
 						videoPlaceholder.style.display = 'none';
 						videoConnected = true;
 						throttleZone.classList.remove('disabled');
@@ -1369,7 +1376,8 @@
 					const stats = await fpvPeerConnection.getStats();
 					let fps = 0;
 					let bitrate = 0;
-					let videoLatency = 0;
+					let jitterBufferMs = 0;
+					let rttMs = 0;
 					let resolution = '';
 
 					stats.forEach((report) => {
@@ -1394,26 +1402,31 @@
 							lastBytesReceived = report.bytesReceived || 0;
 							lastStatsTime = now;
 
-							// Jitter as proxy for latency variability
-							if (report.jitter) {
-								videoLatency = Math.round(report.jitter * 1000);
+							// Jitter buffer delay (time frames spend waiting to be played)
+							// This is a better proxy for video latency than network RTT
+							if (report.jitterBufferDelay && report.jitterBufferEmittedCount) {
+								jitterBufferMs = Math.round((report.jitterBufferDelay / report.jitterBufferEmittedCount) * 1000);
 							}
 						}
 
-						// RTT from candidate pair
+						// RTT from candidate pair (network only, not glass-to-glass)
 						if (report.type === 'candidate-pair' && report.state === 'succeeded') {
 							if (report.currentRoundTripTime) {
-								videoLatency = Math.round(report.currentRoundTripTime * 1000);
+								rttMs = Math.round(report.currentRoundTripTime * 1000);
 							}
 						}
 					});
 
 					// Update display
+					// Estimate video latency: jitter buffer + half RTT (one-way network)
+					// Note: This underestimates true glass-to-glass which includes encode/decode
+					const estimatedLatency = jitterBufferMs + Math.round(rttMs / 2);
+
 					const parts = [];
 					if (resolution) parts.push(resolution);
 					if (fps > 0) parts.push(`${fps}fps`);
 					if (bitrate > 0) parts.push(`${bitrate}kbps`);
-					if (videoLatency > 0) parts.push(`${videoLatency}ms`);
+					if (estimatedLatency > 0) parts.push(`${estimatedLatency}ms`);
 
 					videoStatsEl.textContent = parts.length > 0 ? parts.join(' • ') : '';
 				} catch (err) {

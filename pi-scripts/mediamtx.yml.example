@@ -1,5 +1,8 @@
 # MediaMTX configuration with Cloudflare TURN
 
+# Low latency settings
+writeQueueSize: 128
+
 webrtcICEServers2:
   - url: stun:stun.cloudflare.com:3478
   - url: turn:turn.cloudflare.com:3478?transport=udp
@@ -17,8 +20,9 @@ paths:
     source: rpiCamera
     rpiCameraWidth: 1280
     rpiCameraHeight: 720
-    rpiCameraFPS: 30
+    rpiCameraFPS: 60
     rpiCameraBitrate: 2000000
     rpiCameraCodec: hardwareH264
-    rpiCameraIDRPeriod: 30
+    rpiCameraIDRPeriod: 15
     rpiCameraHardwareH264Profile: baseline
+    rpiCameraDenoise: "off"

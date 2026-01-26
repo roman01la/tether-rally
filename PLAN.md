@@ -70,7 +70,7 @@ A web-based platform where users can remotely control a real RC car over the int
    - Cloudflare Tunnel for internet access
    - Cloudflare TURN for NAT traversal
    - 720p @ 2Mbps @ 30fps H.264
-   - ~10-20ms end-to-end latency
+   - ~250ms glass-to-glass latency over 4G
 
 6. **Admin Dashboard** ✅ (Implemented)
    - Race state management (idle → countdown → racing)
