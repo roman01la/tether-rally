@@ -102,7 +102,7 @@ This project can be adapted for direct Pi control by modifying `control-relay.py
 
 **GPS Module (optional):** Any NMEA-compatible GPS module with serial output (e.g., NEO-6M, NEO-7M, BN-220). Connect TX to Pi GPIO 15 (RX), and power from Pi 3.3V/5V depending on module.
 
-**BNO055 IMU (optional):** 9-DOF IMU for stable compass heading when stationary. Connect via I2C: SDA to Pi GPIO 2, SCL to Pi GPIO 3, VCC to 3.3V, GND to GND. Calibration data auto-saves and restores on reboot. Mount on roof away from motor/ESC for best results.
+**BNO055 IMU (optional):** 9-DOF IMU for stable compass heading when stationary. Connect via I2C: SDA to Pi GPIO 2, SCL to Pi GPIO 3, VCC to 3.3V, GND to GND. Calibration data auto-saves and restores on reboot. Mount on roof away from motor/ESC for best results. **Mount with Y axis pointing forward** (toward front of car) for correct traction control acceleration readings.
 
 **A3144 Hall Effect Sensor (optional):** For precise wheel speed and distance tracking. The A3144 is a unipolar digital Hall sensor that outputs LOW when a magnet's south pole is near. Connect signal to Pi GPIO 22 (with internal pull-up), VCC to 3.3V, GND to GND. Mount a small magnet on the wheel hub - one pulse per revolution. The system calculates RPM, speed (km/h), and total distance traveled. More accurate than GPS for short distances.
 

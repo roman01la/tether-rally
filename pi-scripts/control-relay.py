@@ -390,9 +390,9 @@ async def imu_reader_loop():
             # Read linear acceleration for traction control
             lin_accel = bno.read_linear_acceleration()
             if lin_accel is not None:
-                # BNO055 X axis is forward when mounted correctly
-                # Adjust sign/axis based on actual mounting
-                imu_forward_accel = lin_accel[0]  # X = forward
+                # BNO055 mounted with Y axis forward on car
+                # lin_accel returns (x, y, z) in m/s²
+                imu_forward_accel = lin_accel[1]  # Y = forward
             
             imu_calibration = bno.read_calibration()
             
