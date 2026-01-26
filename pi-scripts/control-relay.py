@@ -28,6 +28,8 @@ import pynmea2
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from bno055_reader import BNO055
+from hall_rpm import HallRPM
+from traction_control import TractionControl
 
 logging.basicConfig(
     level=logging.INFO,
@@ -67,6 +69,7 @@ CMD_CONFIG = 0x05  # Pi -> Browser config updates (throttle limit, turbo mode, e
 CMD_KICK = 0x06    # Pi -> Browser: you have been kicked
 CMD_TELEM = 0x07   # Pi -> Clients: telemetry broadcast
 CMD_TURBO = 0x08   # Turbo mode toggle (sent to ESP32)
+CMD_TRACTION = 0x09 # Traction control toggle (browser -> Pi)
 
 # Race sub-commands (sent as payload after CMD_RACE)
 RACE_START_COUNTDOWN = 0x01
@@ -105,15 +108,36 @@ gps_task = None     # Asyncio task for GPS reading
 # IMU (BNO055) state
 imu_heading = 0.0        # BNO055 fused heading (degrees, 0=North)
 imu_yaw_rate = 0.0       # Gyro Z rotation rate (deg/sec)
+imu_forward_accel = 0.0  # Linear acceleration forward (m/s², gravity-free)
 imu_calibration = {'sys': 0, 'gyr': 0, 'acc': 0, 'mag': 0}
 imu_valid = False        # BNO055 connected and reading
 blended_heading = 0.0    # Final heading (blended IMU + GPS)
 imu_task = None          # Asyncio task for IMU reading
 
+# Traction control
+traction_ctrl = None     # TractionControl instance
+traction_enabled = False # Admin toggle for traction control
+
 # Heading blend parameters
 SPEED_THRESHOLD_LOW = 1.0   # km/h - below this, use IMU only
 SPEED_THRESHOLD_HIGH = 5.0  # km/h - above this, blend toward GPS
 HEADING_SMOOTHING = 0.15    # Low-pass filter alpha (0.1-0.3)
+
+# Hall sensor (wheel RPM) state
+HALL_GPIO_PIN = 22           # BCM GPIO pin for Hall sensor
+WHEEL_DIAMETER_MM = 118      # Wheel diameter in mm
+WHEEL_CIRCUMFERENCE = (WHEEL_DIAMETER_MM * 3.14159) / 1000  # Wheel circumference in meters
+hall_sensor = None           # HallRPM instance
+wheel_rpm = 0.0              # Current wheel RPM
+wheel_speed = 0.0            # Speed from wheel (km/h)
+fused_speed = 0.0            # Final fused speed (km/h)
+wheel_distance = 0.0         # Total distance from wheel (meters)
+race_start_pulse_count = 0   # Pulse count at race start (for distance reset)
+
+# Speed fusion parameters
+SPEED_FUSION_ALPHA = 0.3     # How quickly to blend toward GPS (0.1=slow, 0.5=fast)
+SPEED_GPS_TRUST_MIN = 3.0    # km/h - below this, trust wheel more
+SPEED_GPS_TRUST_MAX = 10.0   # km/h - above this, trust GPS more
 
 # IMU mount offset (degrees to ADD to raw IMU heading to align with car forward)
 # If car points 291° but IMU reads 282°, offset = 291 - 282 = +9
@@ -172,9 +196,13 @@ def broadcast_telemetry():
     global data_channels, race_state, race_start_time, current_throttle, current_steering
     global gps_lat, gps_lon, gps_speed, gps_heading, gps_fix
     global imu_heading, imu_calibration, imu_yaw_rate, blended_heading
+    global fused_speed
     
     # Blend heading before sending
     blend_heading()
+    
+    # Fuse GPS + wheel speed
+    fuse_speed()
     
     # Calculate race time in milliseconds
     if race_state == "racing" and race_start_time:
@@ -188,7 +216,7 @@ def broadcast_telemetry():
     # heading: multiply by 100 to preserve 2 decimal places as uint16 (0-360.00)
     lat_scaled = int(gps_lat * 1e7)
     lon_scaled = int(gps_lon * 1e7)
-    speed_scaled = int(gps_speed * 100)
+    speed_scaled = int(fused_speed * 100)  # Use fused speed instead of raw GPS
     gps_heading_scaled = int(gps_heading * 100)
     
     # Scale IMU values
@@ -200,13 +228,16 @@ def broadcast_telemetry():
     cal_packed = ((cal['sys'] & 0x03) << 6) | ((cal['gyr'] & 0x03) << 4) | \
                  ((cal['acc'] & 0x03) << 2) | (cal['mag'] & 0x03)
     
+    # Wheel distance in centimeters (uint32, max ~42km)
+    wheel_distance_cm = int(wheel_distance * 100)
+    
     # Format: seq(2) + cmd(1) + race_time(4) + throttle(2) + steering(2) + 
     #         lat(4) + lon(4) + speed(2) + gps_heading(2) + fix(1) +
-    #         imu_heading(2) + calibration(1) + yaw_rate(2) = 29 bytes
-    message = struct.pack('<HBIhh iiHHB HBh', 
+    #         imu_heading(2) + calibration(1) + yaw_rate(2) + wheel_dist(4) = 33 bytes
+    message = struct.pack('<HBIhh iiHHB HBh I', 
         0, CMD_TELEM, race_time_ms, current_throttle, current_steering,
         lat_scaled, lon_scaled, speed_scaled, gps_heading_scaled, 1 if gps_fix else 0,
-        imu_heading_scaled, cal_packed, yaw_rate_scaled
+        imu_heading_scaled, cal_packed, yaw_rate_scaled, wheel_distance_cm
     )
     
     # Send to all connected data channels
@@ -322,8 +353,9 @@ def save_imu_calibration(data: bytes):
         logger.warning(f"Failed to save IMU calibration: {e}")
 
 async def imu_reader_loop():
-    """Read BNO055 heading at 20Hz"""
-    global imu_heading, imu_yaw_rate, imu_calibration, imu_valid
+    """Read BNO055 heading and acceleration at 20Hz"""
+    global imu_heading, imu_yaw_rate, imu_forward_accel, imu_calibration, imu_valid
+    global traction_ctrl, traction_enabled
     
     # Load saved calibration BEFORE init
     saved_cal = load_imu_calibration()
@@ -355,7 +387,25 @@ async def imu_reader_loop():
             if yaw_rate is not None:
                 imu_yaw_rate = yaw_rate
             
+            # Read linear acceleration for traction control
+            lin_accel = bno.read_linear_acceleration()
+            if lin_accel is not None:
+                # BNO055 X axis is forward when mounted correctly
+                # Adjust sign/axis based on actual mounting
+                imu_forward_accel = lin_accel[0]  # X = forward
+            
             imu_calibration = bno.read_calibration()
+            
+            # Update traction control (at IMU rate for responsiveness)
+            if traction_ctrl and traction_enabled and imu_valid:
+                traction_ctrl.update(
+                    imu_forward_accel=imu_forward_accel,
+                    imu_yaw_rate=imu_yaw_rate,
+                    wheel_speed=wheel_speed,
+                    gps_speed=gps_speed,
+                    gps_valid=gps_fix,
+                    throttle_input=current_throttle
+                )
             
             # Auto-save calibration when fully calibrated (all 3s)
             # Only save once per session to avoid wear
@@ -383,23 +433,23 @@ async def imu_reader_loop():
 
 def blend_heading():
     """Blend IMU and GPS heading based on speed"""
-    global blended_heading, imu_heading, gps_heading, gps_speed, imu_valid
+    global blended_heading, imu_heading, gps_heading, fused_speed, imu_valid
     
     if not imu_valid:
         # No IMU - use GPS heading directly
         blended_heading = gps_heading
         return
     
-    if gps_speed < SPEED_THRESHOLD_LOW:
+    if fused_speed < SPEED_THRESHOLD_LOW:
         # Very slow/stopped - trust IMU completely
         target = imu_heading
-    elif gps_speed > SPEED_THRESHOLD_HIGH:
+    elif fused_speed > SPEED_THRESHOLD_HIGH:
         # Moving fast - blend heavily toward GPS (true motion direction)
         blend_factor = 0.8  # 80% GPS, 20% IMU
         target = blend_angles(imu_heading, gps_heading, blend_factor)
     else:
         # Transitional speed - linear blend
-        t = (gps_speed - SPEED_THRESHOLD_LOW) / (SPEED_THRESHOLD_HIGH - SPEED_THRESHOLD_LOW)
+        t = (fused_speed - SPEED_THRESHOLD_LOW) / (SPEED_THRESHOLD_HIGH - SPEED_THRESHOLD_LOW)
         target = blend_angles(imu_heading, gps_heading, t * 0.8)
     
     # Smooth the heading change (handles wrap-around)
@@ -426,6 +476,74 @@ def smooth_angle(current: float, target: float, alpha: float) -> float:
         math.cos(math.radians(target - current))
     )
     return (current + alpha * math.degrees(diff)) % 360
+
+
+# ----- Speed Fusion (GPS + Wheel RPM) -----
+
+def update_wheel_speed():
+    """Update wheel speed and distance from Hall sensor"""
+    global wheel_rpm, wheel_speed, wheel_distance, hall_sensor, race_start_pulse_count
+    
+    if hall_sensor is None:
+        wheel_rpm = 0.0
+        wheel_speed = 0.0
+        wheel_distance = 0.0
+        return
+    
+    wheel_rpm = hall_sensor.get_rpm()
+    # Convert RPM to km/h: (RPM * circumference_m * 60) / 1000
+    # RPM * circumference = m/min, * 60 = m/h, / 1000 = km/h
+    wheel_speed = (wheel_rpm * WHEEL_CIRCUMFERENCE * 60) / 1000
+    
+    # Calculate distance traveled since race start
+    pulses_since_start = hall_sensor.get_pulse_count() - race_start_pulse_count
+    wheel_distance = pulses_since_start * WHEEL_CIRCUMFERENCE
+
+
+def fuse_speed():
+    """
+    Fuse GPS speed with wheel RPM speed.
+    
+    Strategy:
+    - Wheel speed: instant response, good for acceleration/braking detection
+    - GPS speed: stable absolute value, but ~500ms latency
+    
+    At low speed: trust wheel more (GPS is noisy/inaccurate)
+    At high speed: blend toward GPS (more stable, wheel may slip)
+    Use wheel for quick changes, GPS to correct drift over time.
+    """
+    global fused_speed, wheel_speed, gps_speed, gps_fix
+    
+    # Update wheel speed from sensor
+    update_wheel_speed()
+    
+    # If no GPS fix, use wheel speed only
+    if not gps_fix:
+        fused_speed = wheel_speed
+        return
+    
+    # If wheel isn't turning (no pulses), trust GPS
+    if wheel_speed < 0.5:
+        fused_speed = gps_speed
+        return
+    
+    # Calculate trust factor for GPS based on speed
+    # Low speed: trust wheel more (GPS noisy)
+    # High speed: trust GPS more (stable)
+    if gps_speed < SPEED_GPS_TRUST_MIN:
+        gps_trust = 0.2  # 20% GPS, 80% wheel
+    elif gps_speed > SPEED_GPS_TRUST_MAX:
+        gps_trust = 0.7  # 70% GPS, 30% wheel
+    else:
+        # Linear interpolation
+        t = (gps_speed - SPEED_GPS_TRUST_MIN) / (SPEED_GPS_TRUST_MAX - SPEED_GPS_TRUST_MIN)
+        gps_trust = 0.2 + t * 0.5  # 0.2 to 0.7
+    
+    # Blend toward target
+    target = gps_trust * gps_speed + (1 - gps_trust) * wheel_speed
+    
+    # Smooth the transition
+    fused_speed = fused_speed + SPEED_FUSION_ALPHA * (target - fused_speed)
 
 # ----- Token Validation -----
 
@@ -582,6 +700,8 @@ async def handle_offer(request):
         @channel.on("message")
         def on_message(message):
             global race_state, current_throttle, current_steering
+            global traction_ctrl, traction_enabled
+            global video_connected, player_ready, turbo_mode
             # New packet format: seq(2) + cmd(1) + payload
             if isinstance(message, bytes) and len(message) >= 3:
                 seq = struct.unpack('<H', message[0:2])[0]
@@ -597,10 +717,17 @@ async def handle_offer(request):
                     
                     if race_state == "racing":
                         ctrl_count[0] += 1
+                        
+                        # Apply traction control if enabled
+                        if traction_ctrl and traction_enabled and current_throttle > 0:
+                            limited_throttle = traction_ctrl.apply_to_throttle(current_throttle)
+                            if limited_throttle != current_throttle:
+                                # Repack message with limited throttle
+                                message = struct.pack('<HBhh', seq, CMD_CTRL, limited_throttle, current_steering)
+                        
                         forward_to_esp32(message)
                     # else: silently drop control commands (race not active)
                 elif cmd == CMD_STATUS:  # STATUS - browser reporting state
-                    global video_connected, player_ready
                     if len(message) >= 5:
                         sub_cmd = message[3]
                         value = message[4] == 1
@@ -611,7 +738,6 @@ async def handle_offer(request):
                             player_ready = value
                             logger.info(f"Player ready: {player_ready}")
                 elif cmd == CMD_TURBO:  # TURBO - player toggling turbo mode
-                    global turbo_mode
                     if len(message) >= 4:
                         new_turbo = message[3] == 1
                         turbo_mode = new_turbo
@@ -620,6 +746,16 @@ async def handle_offer(request):
                         # Forward to ESP32
                         send_turbo_to_esp32()
                         
+                        # Send updated config back to confirm
+                        send_config()
+                elif cmd == CMD_TRACTION:  # TRACTION - player toggling traction control
+                    if len(message) >= 4:
+                        traction_enabled = message[3] == 1
+                        if traction_ctrl:
+                            traction_ctrl.enabled = traction_enabled
+                            if not traction_enabled:
+                                traction_ctrl.reset()  # Clear any active slip state
+                        logger.info(f"Traction control set by player: {traction_enabled}")
                         # Send updated config back to confirm
                         send_config()
         
@@ -772,6 +908,9 @@ async def handle_telemetry_offer(request):
 
 async def handle_health(request):
     """Health check endpoint"""
+    # Get traction control status
+    tc_status = traction_ctrl.get_status() if traction_ctrl else {"enabled": False}
+    
     return web.json_response(
         {
             "status": "ok",
@@ -781,11 +920,17 @@ async def handle_health(request):
             "video_connected": video_connected,
             "player_ready": player_ready,
             "turbo_mode": turbo_mode,
+            "speed": {
+                "fused_kmh": round(fused_speed, 2),
+                "gps_kmh": round(gps_speed, 2),
+                "wheel_kmh": round(wheel_speed, 2),
+                "wheel_rpm": round(wheel_rpm, 1),
+                "wheel_distance_m": round(wheel_distance, 2)
+            },
             "gps": {
                 "fix": gps_fix,
                 "lat": gps_lat,
                 "lon": gps_lon,
-                "speed_kmh": round(gps_speed, 2),
                 "heading": round(gps_heading, 1)
             },
             "imu": {
@@ -793,8 +938,10 @@ async def handle_health(request):
                 "heading": round(imu_heading, 1),
                 "blended_heading": round(blended_heading, 1),
                 "yaw_rate": round(imu_yaw_rate, 1),
+                "forward_accel": round(imu_forward_accel, 2),
                 "calibration": imu_calibration
-            }
+            },
+            "traction_control": tc_status
         },
         headers={"Access-Control-Allow-Origin": "*"}
     )
@@ -823,16 +970,16 @@ def send_race_command(sub_cmd: int, payload: bytes = b''):
     return True
 
 def send_config():
-    """Send current config (turbo mode) to browser"""
-    global control_channel, turbo_mode
+    """Send current config (turbo mode, traction control) to browser"""
+    global control_channel, turbo_mode, traction_enabled
     
     if control_channel is None or control_channel.readyState != "open":
         return False
     
-    # Format: seq(2) + cmd(1) + reserved(2) + turbo(1)
-    message = struct.pack('<HBhB', 0, CMD_CONFIG, 0, 1 if turbo_mode else 0)
+    # Format: seq(2) + cmd(1) + reserved(1) + turbo(1) + traction(1)
+    message = struct.pack('<HBbBB', 0, CMD_CONFIG, 0, 1 if turbo_mode else 0, 1 if traction_enabled else 0)
     control_channel.send(message)
-    logger.info(f"Sent config: turbo={turbo_mode}")
+    logger.info(f"Sent config: turbo={turbo_mode}, traction={traction_enabled}")
     return True
 
 def send_turbo_to_esp32():
@@ -877,10 +1024,13 @@ def send_race_state():
 
 async def countdown_to_racing():
     """Wait 3 seconds then enable controls"""
-    global race_state, race_start_time
+    global race_state, race_start_time, race_start_pulse_count, hall_sensor
     await asyncio.sleep(3.0)
     race_state = "racing"
     race_start_time = time.time()
+    # Reset wheel distance tracking
+    if hall_sensor:
+        race_start_pulse_count = hall_sensor.get_pulse_count()
     logger.info("Race started - controls enabled")
 
 async def handle_start_race(request):
@@ -983,10 +1133,32 @@ async def handle_set_turbo(request):
         logger.error(f"Error setting turbo: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=400, headers=CORS_HEADERS)
 
+async def handle_set_traction_control(request):
+    """Admin endpoint to toggle traction control"""
+    global traction_enabled, traction_ctrl
+    
+    try:
+        body = await request.json()
+        traction_enabled = bool(body.get('enabled', False))
+        
+        # Reset traction control state when toggling
+        if traction_ctrl:
+            traction_ctrl.reset()
+            traction_ctrl.enabled = traction_enabled
+        
+        logger.info(f"Traction control set to {traction_enabled}")
+        return web.json_response({
+            "success": True, 
+            "traction_enabled": traction_enabled
+        }, headers=CORS_HEADERS)
+    except Exception as e:
+        logger.error(f"Error setting traction control: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=400, headers=CORS_HEADERS)
+
 # ----- Main -----
 
 async def main():
-    global telemetry_task, gps_task, imu_task
+    global telemetry_task, gps_task, imu_task, hall_sensor, traction_ctrl
     
     # Load revoked tokens from file
     load_revoked_tokens()
@@ -996,6 +1168,19 @@ async def main():
     
     # Start ESP32 beacon discovery
     asyncio.create_task(discover_esp32())
+    
+    # Start Hall sensor (wheel RPM)
+    hall_sensor = HallRPM(gpio_pin=HALL_GPIO_PIN, magnets_per_rev=1, timeout=1.0)
+    if hall_sensor.start():
+        logger.info(f"Hall sensor started on GPIO {HALL_GPIO_PIN}")
+    else:
+        logger.warning("Hall sensor not available, using GPS speed only")
+        hall_sensor = None
+    
+    # Initialize traction control (disabled by default)
+    traction_ctrl = TractionControl()
+    traction_ctrl.enabled = False  # Must be enabled via admin API
+    logger.info("Traction control initialized (disabled by default)")
     
     # Start GPS reader loop
     gps_task = asyncio.create_task(gps_reader_loop())
@@ -1025,6 +1210,8 @@ async def main():
     app.router.add_options("/admin/kick-player", handle_options)
     app.router.add_post("/admin/set-turbo", handle_set_turbo)
     app.router.add_options("/admin/set-turbo", handle_options)
+    app.router.add_post("/admin/set-traction", handle_set_traction_control)
+    app.router.add_options("/admin/set-traction", handle_options)
     
     runner = web.AppRunner(app)
     await runner.setup()
@@ -1039,6 +1226,7 @@ async def main():
     logger.info(f"  POST /admin/start-race          - Start race countdown")
     logger.info(f"  POST /admin/stop-race           - Stop race")
     logger.info(f"  POST /admin/kick-player         - Kick player & revoke token")
+    logger.info(f"  POST /admin/set-traction        - Toggle traction control")
     
     # Keep running
     while True:

@@ -30,6 +30,9 @@ REG_EUL_HEADING_LSB = 0x1A  # Euler heading (2 bytes, LSB first)
 REG_EUL_ROLL_LSB = 0x1C     # Euler roll (2 bytes)
 REG_EUL_PITCH_LSB = 0x1E    # Euler pitch (2 bytes)
 REG_GYR_DATA_Z_LSB = 0x18   # Gyro Z (yaw rate, 2 bytes)
+REG_LIA_DATA_X_LSB = 0x28   # Linear acceleration X (2 bytes, gravity-free)
+REG_LIA_DATA_Y_LSB = 0x2A   # Linear acceleration Y (2 bytes)
+REG_LIA_DATA_Z_LSB = 0x2C   # Linear acceleration Z (2 bytes)
 
 # Calibration offset registers (22 bytes total, must be in CONFIG mode to write)
 REG_ACC_OFFSET_X_LSB = 0x55  # Accel offsets (6 bytes)
@@ -172,6 +175,33 @@ class BNO055:
             logger.warning(f"BNO055 yaw rate read error: {e}")
             return None
     
+    def read_linear_acceleration(self) -> tuple[float, float, float] | None:
+        """
+        Read linear acceleration (gravity-compensated) in m/s².
+        Returns (x, y, z) where:
+        - X = forward/backward (positive = forward)
+        - Y = left/right (positive = right)
+        - Z = up/down (positive = up)
+        
+        Note: Actual axis mapping depends on IMU mounting orientation.
+        Returns None on error.
+        """
+        if not self._initialized or not self.bus:
+            return None
+        try:
+            # Read 6 bytes: X(2), Y(2), Z(2)
+            data = self.bus.read_i2c_block_data(self.address, REG_LIA_DATA_X_LSB, 6)
+            # BNO055 outputs acceleration in 1/100 m/s² units
+            x_raw, y_raw, z_raw = struct.unpack('<hhh', bytes(data))
+            return (
+                x_raw / 100.0,
+                y_raw / 100.0,
+                z_raw / 100.0
+            )
+        except Exception as e:
+            logger.warning(f"BNO055 linear accel read error: {e}")
+            return None
+
     def read_calibration(self) -> dict:
         """
         Read calibration status for each subsystem.

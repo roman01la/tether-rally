@@ -241,7 +241,7 @@
 			#turbo-btn {
 				position: absolute;
 				bottom: 40px;
-				left: 50%;
+				left: calc(50% + 80px);
 				transform: translateX(-50%);
 				padding: 12px 24px;
 				border-radius: 30px;
@@ -255,6 +255,37 @@
 				-webkit-backdrop-filter: blur(10px);
 				transition: all 0.2s;
 				z-index: 20;
+			}
+			#traction-btn {
+				position: absolute;
+				bottom: 40px;
+				left: calc(50% - 80px);
+				transform: translateX(-50%);
+				padding: 12px 24px;
+				border-radius: 30px;
+				border: 2px solid rgba(100, 100, 140, 0.5);
+				background: rgba(30, 30, 50, 0.7);
+				color: rgba(255, 255, 255, 0.7);
+				font-size: 14px;
+				font-weight: 600;
+				cursor: pointer;
+				backdrop-filter: blur(10px);
+				-webkit-backdrop-filter: blur(10px);
+				transition: all 0.2s;
+				z-index: 20;
+			}
+			#traction-btn:hover {
+				background: rgba(50, 50, 80, 0.8);
+				border-color: rgba(150, 150, 200, 0.5);
+			}
+			#traction-btn.active {
+				background: rgba(64, 145, 108, 0.9);
+				border-color: rgba(82, 183, 136, 0.8);
+				color: #fff;
+			}
+			#traction-btn.disabled {
+				opacity: 0.3;
+				pointer-events: none;
 			}
 			#turbo-btn:hover {
 				background: rgba(50, 50, 80, 0.8);
@@ -466,17 +497,6 @@
 				inset: 0;
 				background: #ff4444;
 				clip-path: polygon(50% 0%, 100% 100%, 50% 70%, 0% 100%);
-			}
-			#track-map .car-dot::after {
-				content: '';
-				position: absolute;
-				top: 2px;
-				left: 50%;
-				transform: translateX(-50%);
-				width: 4px;
-				height: 4px;
-				background: #fff;
-				border-radius: 50%;
 			}
 			#track-map .no-fix {
 				position: absolute;
@@ -805,9 +825,10 @@
 				<div id="steering-thumb" class="slider-thumb"></div>
 			</div>
 
-			<div id="instructions">WASD / Arrow keys | E = Turbo</div>
+			<div id="instructions">WASD / Arrow keys | E = Turbo | Q = Traction</div>
 
-			<!-- Turbo Button -->
+			<!-- Control Buttons -->
+			<button id="traction-btn" class="disabled" onclick="toggleTraction()">🛞 TC (Q)</button>
 			<button id="turbo-btn" class="disabled" onclick="toggleTurbo()">🚀 TURBO (E)</button>
 		</div>
 
@@ -843,6 +864,7 @@
 			const CMD_KICK = 0x06; // Pi -> Browser: you have been kicked
 			const CMD_TELEM = 0x07; // Pi -> Browser: telemetry broadcast
 			const CMD_TURBO = 0x08; // Browser -> Pi: turbo mode toggle
+			const CMD_TRACTION = 0x09; // Browser -> Pi: traction control toggle
 
 			// Race sub-commands
 			const RACE_START_COUNTDOWN = 0x01;
@@ -907,7 +929,8 @@
 			let deviceOnline = false;
 			let videoConnected = false;
 			const keys = new Set();
-			let turboMode = false; // Turbo mode from admin
+			let turboMode = false; // Turbo mode state
+			let tractionMode = false; // Traction control state
 			const keyStep = 1.0;
 			const strStep = 1.0;
 			const strSmoothRate = 0.15; // How fast steering interpolates (0-1, lower = smoother)
@@ -933,7 +956,8 @@
 			// Distance tracking (during race)
 			let prevGpsLat = null;
 			let prevGpsLon = null;
-			let totalDistance = 0; // in meters
+			let totalDistance = 0; // in meters (GPS-based, fallback)
+			let wheelDistance = 0; // in meters (from wheel sensor, more accurate)
 			let isRacing = false;
 
 			// Track map configuration
@@ -1391,6 +1415,7 @@
 						waitingOverlay.classList.remove('active'); // Hide waiting overlay
 						// Reset distance tracking
 						totalDistance = 0;
+						wheelDistance = 0;
 						prevGpsLat = null;
 						prevGpsLon = null;
 						isRacing = true;
@@ -1437,12 +1462,14 @@
 			}
 
 			function handleConfigCommand(data) {
-				// Format: seq(2) + cmd(1) + reserved(2) + turbo(1)
+				// Format: seq(2) + cmd(1) + reserved(1) + turbo(1) + traction(1)
 				if (data.byteLength >= 6) {
 					const view = new DataView(data);
-					turboMode = view.getUint8(5) !== 0;
+					turboMode = view.getUint8(4) !== 0;
+					tractionMode = view.getUint8(5) !== 0;
 					updateTurboIndicator();
-					console.log('Config received: turbo =', turboMode);
+					updateTractionIndicator();
+					console.log('Config received: turbo =', turboMode, ', traction =', tractionMode);
 				}
 			}
 
@@ -1484,6 +1511,45 @@
 				}
 			}
 
+			// Traction control functions
+			function updateTractionIndicator() {
+				const tractionBtn = document.getElementById('traction-btn');
+				if (tractionMode) {
+					tractionBtn.classList.add('active');
+				} else {
+					tractionBtn.classList.remove('active');
+				}
+			}
+
+			function sendTraction(enabled) {
+				if (controlChannel && controlChannel.readyState === 'open') {
+					controlSeq = (controlSeq + 1) & 0xffff;
+					const buf = new ArrayBuffer(4);
+					const view = new DataView(buf);
+					view.setUint16(0, controlSeq, true);
+					view.setUint8(2, CMD_TRACTION);
+					view.setUint8(3, enabled ? 1 : 0);
+					controlChannel.send(buf);
+					console.log('Sent traction:', enabled, 'seq:', controlSeq);
+				}
+			}
+
+			function toggleTraction() {
+				if (!isConnected) return;
+				tractionMode = !tractionMode;
+				sendTraction(tractionMode);
+				updateTractionIndicator();
+			}
+
+			function updateTractionButton() {
+				const tractionBtn = document.getElementById('traction-btn');
+				if (isConnected) {
+					tractionBtn.classList.remove('disabled');
+				} else {
+					tractionBtn.classList.add('disabled');
+				}
+			}
+
 			function handleKicked() {
 				console.log('Kicked by admin');
 				// Stop everything
@@ -1508,17 +1574,18 @@
 			function handleTelemetry(view) {
 				// Parse telemetry packet
 				// Old format (24 bytes): seq(2) + cmd(1) + race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + heading(2) + fix(1)
-				// New format (29 bytes): + imu_heading(2) + calibration(1) + yaw_rate(2)
+				// IMU format (29 bytes): + imu_heading(2) + calibration(1) + yaw_rate(2)
+				// Wheel format (33 bytes): + wheel_distance(4)
 				const raceTimeMs = view.getUint32(3, true);
 				// const telem_throttle = view.getInt16(7, true);  // Not used currently
 				// const telem_steering = view.getInt16(9, true);  // Not used currently
 				gpsLat = view.getInt32(11, true) / 1e7; // Scaled lat back to degrees
 				gpsLon = view.getInt32(15, true) / 1e7; // Scaled lon back to degrees
-				gpsSpeed = view.getUint16(19, true) / 100; // Scaled speed back to km/h
+				gpsSpeed = view.getUint16(19, true) / 100; // Scaled speed back to km/h (now fused speed)
 				gpsHeading = view.getUint16(21, true) / 100; // Scaled heading back to degrees
 				gpsFix = view.getUint8(23) === 1;
 
-				// Parse IMU fields if present (new 29-byte format)
+				// Parse IMU fields if present (29+ byte format)
 				if (view.byteLength >= 29) {
 					imuHeading = view.getUint16(24, true) / 100; // Blended heading in degrees
 					imuCalibration = view.getUint8(26); // Packed calibration
@@ -1526,6 +1593,11 @@
 
 					// Smooth heading for rendering (handles wrap-around)
 					smoothedHeading = smoothAngle(smoothedHeading, imuHeading, 0.25);
+				}
+
+				// Parse wheel distance if present (33-byte format)
+				if (view.byteLength >= 33) {
+					wheelDistance = view.getUint32(29, true) / 100; // cm to meters
 				}
 
 				// Update track map and compass
@@ -1561,7 +1633,7 @@
 				// Update speed display
 				speedDisplay.textContent = `${Math.round(gpsSpeed)} km/h`;
 
-				// Accumulate distance if racing and have GPS fix
+				// Accumulate GPS distance as fallback (if wheel sensor not available)
 				if (isRacing && gpsFix && prevGpsLat !== null && prevGpsLon !== null) {
 					const dist = haversineDistance(prevGpsLat, prevGpsLon, gpsLat, gpsLon);
 					// Filter out GPS jumps (> 10m between updates is suspicious at low speeds)
@@ -1574,9 +1646,10 @@
 					prevGpsLon = gpsLon;
 				}
 
-				// Update distance display (show only during/after race)
-				if (totalDistance > 0) {
-					distanceDisplay.textContent = `${(totalDistance / 1000).toFixed(2)} km`;
+				// Update distance display - prefer wheel distance (more accurate), fallback to GPS
+				const displayDistance = wheelDistance > 0 ? wheelDistance : totalDistance;
+				if (displayDistance > 0) {
+					distanceDisplay.textContent = `${(displayDistance / 1000).toFixed(2)} km`;
 				} else {
 					distanceDisplay.textContent = '';
 				}
@@ -1798,24 +1871,7 @@
 					// Start ping for latency measurement
 					pingInterval = setInterval(sendPing, 500);
 					updateTurboButton();
-				};
-
-				controlChannel.onclose = () => {
-					console.log('Control DataChannel closed');
-					isConnected = false;
-					clearInterval(controlInterval);
-					clearInterval(pingInterval);
-					setStatus('disconnected', 'Disconnected');
-					turboMode = false;
-					updateTurboIndicator();
-					updateTurboButton();
-					throttleZone.classList.add('disabled');
-					steeringZone.classList.add('disabled');
-					waitingOverlay.classList.remove('active'); // Hide waiting when disconnected
-				};
-
-				controlChannel.onerror = (err) => {
-					console.error('DataChannel error:', err);
+					updateTractionButton();
 				};
 
 				controlChannel.onmessage = (event) => {
@@ -2159,6 +2215,9 @@
 					e.preventDefault();
 				} else if (e.code === 'KeyE' && !e.repeat) {
 					toggleTurbo();
+					e.preventDefault();
+				} else if (e.code === 'KeyQ' && !e.repeat) {
+					toggleTraction();
 					e.preventDefault();
 				}
 			});

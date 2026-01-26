@@ -4,11 +4,12 @@
 
 Control a real RC car from anywhere in the world through your browser. This project enables low-latency remote control (~50-100ms over 4G) with live FPV video streaming, using WebRTC for peer-to-peer communication.
 
-|                        |                        |
-| :--------------------: | :--------------------: |
-| ![Setup 1](imgs/7.jpg) | ![Setup 2](imgs/2.jpg) |
-| ![Setup 3](imgs/3.jpg) | ![Setup 4](imgs/4.jpg) |
-| ![Setup 8](imgs/8.jpg) | ![Setup 6](imgs/6.jpg) |
+|                         |                         |
+| :---------------------: | :---------------------: |
+| ![Setup 1](imgs/7.jpg)  | ![Setup 2](imgs/2.jpg)  |
+| ![Setup 3](imgs/3.jpg)  | ![Setup 4](imgs/4.jpg)  |
+| ![Setup 9](imgs/10.jpg) | ![Setup 6](imgs/11.jpg) |
+| ![Setup 8](imgs/8.jpg)  | ![Setup 6](imgs/6.jpg)  |
 
 ## Features
 
@@ -16,6 +17,7 @@ Control a real RC car from anywhere in the world through your browser. This proj
 - **Live FPV video** - 720p @ 30fps H.264 streaming
 - **Touch & keyboard controls** - Works on mobile and desktop (smooth interpolation)
 - **Turbo mode** - Press E or tap button for extra speed (30% → 65% forward throttle)
+- **Traction control** - Press Q or tap button for automatic slip detection & throttle limiting
 - **Token-based access** - Secure, time-limited access tokens
 - **Auto-reconnect** - Handles connection drops gracefully, resumes race state
 - **ESP32-WROOM & ESP32-C3** - Compatible with both (C3 Super Mini for smaller builds)
@@ -29,7 +31,11 @@ Control a real RC car from anywhere in the world through your browser. This proj
 - **Live telemetry overlay** - Race time, throttle & steering displayed on YouTube stream
 - **GPS telemetry** - Real-time position, speed (km/h), and heading from GPS module
 - **IMU compass (BNO055)** - Stable heading even when stopped (9-DOF fusion)
+- **IMU linear acceleration** - Gravity-free acceleration for traction control
 - **Heading blending** - Uses IMU at low speed, GPS course when moving fast
+- **Hall effect wheel sensor** - RPM and precise distance tracking via magnet
+- **Speed fusion** - Combines GPS (stable) + wheel RPM (responsive) for best of both
+- **Wheel distance tracking** - More accurate than GPS for short distances
 - **Compass HUD** - Video game style horizontal compass strip
 - **Track map overlay** - Mini-map showing live car position and direction arrow
 
@@ -83,18 +89,28 @@ This project can be adapted for direct Pi control by modifying `control-relay.py
 
 **On the RC Car:**
 
-| Component                 | Purpose                   | Est. Cost |
-| ------------------------- | ------------------------- | --------- |
-| Raspberry Pi Zero 2W      | Video streaming + relay   | ~$15      |
-| Pi Camera Module 3 (Wide) | FPV camera                | ~$35      |
-| GPS Module (optional)     | Speed & position data     | ~$10      |
-| BNO055 IMU (optional)     | Compass heading at rest   | ~$10      |
+| Component                    | Purpose                 | Est. Cost |
+| ---------------------------- | ----------------------- | --------- |
+| Raspberry Pi Zero 2W         | Video streaming + relay | ~$15      |
+| Pi Camera Module 3 (Wide)    | FPV camera              | ~$35      |
+| GPS Module (optional)        | Speed & position data   | ~$10      |
+| BNO055 IMU (optional)        | Compass heading at rest | ~$10      |
+| A3144 Hall Sensor (optional) | Wheel RPM & distance    | ~$2       |
 
 **Power:** The ARRMA Big Rock ESC has 5V output pins (intended for cooling fans) that can power the Raspberry Pi directly. Connect to GPIO 5V and GND pins. For other setups, use a USB power bank (5V 2A+).
 
 **GPS Module (optional):** Any NMEA-compatible GPS module with serial output (e.g., NEO-6M, NEO-7M, BN-220). Connect TX to Pi GPIO 15 (RX), and power from Pi 3.3V/5V depending on module.
 
 **BNO055 IMU (optional):** 9-DOF IMU for stable compass heading when stationary. Connect via I2C: SDA to Pi GPIO 2, SCL to Pi GPIO 3, VCC to 3.3V, GND to GND. Calibration data auto-saves and restores on reboot. Mount on roof away from motor/ESC for best results.
+
+**A3144 Hall Effect Sensor (optional):** For precise wheel speed and distance tracking. The A3144 is a unipolar digital Hall sensor that outputs LOW when a magnet's south pole is near. Connect signal to Pi GPIO 22 (with internal pull-up), VCC to 3.3V, GND to GND. Mount a small magnet on the wheel hub - one pulse per revolution. The system calculates RPM, speed (km/h), and total distance traveled. More accurate than GPS for short distances.
+
+> **A3144 Hall Sensor Wiring:**
+>
+> - **Signal (OUT):** Pi GPIO 22 (uses internal pull-up)
+> - **VCC:** 3.3V from Pi
+> - **GND:** Pi GND
+> - **Magnet:** Mount on wheel hub, sensor on chassis ~2-5mm away
 
 > **CJMCU-055 / BNO055 Board Setup:**
 >
@@ -183,6 +199,9 @@ arrma-remote/
 │   └── wrangler.jsonc     # Worker config
 ├── pi-scripts/
 │   ├── control-relay.py   # WebRTC → UDP relay + race management
+│   ├── bno055_reader.py   # BNO055 IMU driver
+│   ├── hall_rpm.py        # Hall sensor wheel RPM reader
+│   ├── traction_control.py # Traction control system
 │   ├── control-relay.service
 │   ├── deploy.sh          # Quick deploy to Pi
 │   └── .env.example       # Pi secrets template
@@ -432,14 +451,16 @@ The token must use the same `TOKEN_SECRET` as configured on the Pi.
 
 ### Controls
 
-| Input                      | Action      |
-| -------------------------- | ----------- |
-| Left zone drag up/down     | Throttle    |
-| Right zone drag left/right | Steering    |
-| W / ↑                      | Forward     |
-| S / ↓                      | Reverse     |
-| A / ←                      | Steer left  |
-| D / →                      | Steer right |
+| Input                      | Action          |
+| -------------------------- | --------------- |
+| Left zone drag up/down     | Throttle        |
+| Right zone drag left/right | Steering        |
+| W / ↑                      | Forward         |
+| S / ↓                      | Reverse         |
+| A / ←                      | Steer left      |
+| D / →                      | Steer right     |
+| E                          | Toggle Turbo    |
+| Q                          | Toggle Traction |
 
 ### Admin Dashboard
 
@@ -470,6 +491,7 @@ Access the admin dashboard at `/admin.html` (requires basic auth):
 ## Safety Features
 
 - **Throttle limits** - Admin-adjustable 10-50%, ESP32 hard limit 50% forward / 30% reverse
+- **Traction control** - IMU + wheel RPM slip detection, automatic throttle limiting (max 30% cut)
 - **Auto-neutral** - Car stops if connection lost (80ms hold, then neutral)
 - **Slew rate limiting** - Prevents sudden jerky movements
 - **Token expiration** - Tokens expire automatically
@@ -506,15 +528,18 @@ Access the admin dashboard at `/admin.html` (requires basic auth):
 
 ### Binary Protocol
 
-| Command | Code | Payload                   | Description                      |
-| ------- | ---- | ------------------------- | -------------------------------- |
-| PING    | 0x00 | timestamp(4)              | Latency measurement              |
-| CTRL    | 0x01 | throttle(2) + steering(2) | Control values ±32767            |
-| PONG    | 0x02 | timestamp(4)              | Latency response                 |
-| RACE    | 0x03 | sub-cmd(1)                | Race start/stop commands         |
-| STATUS  | 0x04 | sub-cmd(1) + value(1)     | Browser→Pi status (video, ready) |
-| CONFIG  | 0x05 | type(1) + value(4)        | Pi→Browser config (throttle)     |
-| KICK    | 0x06 | -                         | Pi→Browser: kicked notification  |
+| Command  | Code | Payload                              | Description                      |
+| -------- | ---- | ------------------------------------ | -------------------------------- |
+| PING     | 0x00 | timestamp(4)                         | Latency measurement              |
+| CTRL     | 0x01 | throttle(2) + steering(2)            | Control values ±32767            |
+| PONG     | 0x02 | timestamp(4)                         | Latency response                 |
+| RACE     | 0x03 | sub-cmd(1)                           | Race start/stop commands         |
+| STATUS   | 0x04 | sub-cmd(1) + value(1)                | Browser→Pi status (video, ready) |
+| CONFIG   | 0x05 | reserved(1) + turbo(1) + traction(1) | Pi→Browser config                |
+| KICK     | 0x06 | -                                    | Pi→Browser: kicked notification  |
+| TELEM    | 0x07 | ...see PLAN.md...                    | Pi→Clients: telemetry (33 bytes) |
+| TURBO    | 0x08 | turbo(1)                             | Turbo mode toggle                |
+| TRACTION | 0x09 | traction(1)                          | Traction control toggle          |
 
 Packet format: `seq(uint16 LE) + cmd(uint8) + payload`
 
