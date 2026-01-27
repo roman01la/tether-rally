@@ -15,7 +15,7 @@ Control a real RC car from anywhere in the world through your browser. This proj
 ## Features
 
 - **Low-latency control** - ~50-100ms over internet, ~10-15ms on LAN
-- **Live FPV video** - 720p @ 30fps H.264 streaming (~250ms glass-to-glass over 4G)
+- **Live FPV video** - 720p @ 30fps H.264 streaming (~150ms glass-to-glass over 4G)
 - **Touch & keyboard controls** - Works on mobile and desktop (smooth interpolation)
 - **Turbo mode** - Press E or tap button for extra speed (30% → 65% forward throttle)
 - **Traction control** - Press Q or tap button for automatic slip detection & throttle limiting

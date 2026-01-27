@@ -162,7 +162,7 @@
 				align-items: center;
 				justify-content: center;
 			}
-			#video-container video {
+			#video-container canvas {
 				position: absolute;
 				width: 100%;
 				height: 100%;
@@ -801,7 +801,7 @@
 		<div id="control-screen">
 			<!-- Video Background -->
 			<div id="video-container">
-				<video id="fpv-video" autoplay playsinline muted></video>
+				<canvas id="fpv-canvas"></canvas>
 				<div id="video-placeholder">
 					<div class="spinner"></div>
 					<span>Connecting video...</span>
@@ -915,6 +915,7 @@
 			const COUNTDOWN_GO_MS = 3000;
 			const COUNTDOWN_HIDE_MS = 3500;
 			const FINISH_DISPLAY_MS = 4000;
+			const MINIMAL_MEASURED_VIDEO_LATENCY = 120; // ms
 			// ============================
 
 			// ===== PROTOCOL CONSTANTS =====
@@ -1040,7 +1041,9 @@
 			const connectBtn = document.getElementById('connect-btn');
 			const loginError = document.getElementById('login-error');
 			const deviceStatusEl = document.getElementById('device-status');
-			const fpvVideo = document.getElementById('fpv-video');
+			const fpvCanvas = document.getElementById('fpv-canvas');
+			// Note: fpvCtx is created later - either transferred to worker or kept for fallback
+			let fpvCtx = null;
 			const videoPlaceholder = document.getElementById('video-placeholder');
 			const statusEl = document.getElementById('status');
 			const valuesEl = document.getElementById('values');
@@ -1206,9 +1209,20 @@
 				startFpvStream();
 			}
 
-			// ===== WebRTC FPV Stream =====
+			// ===== WebRTC FPV Stream with WebCodecs =====
 			let fpvPeerConnection = null;
 			let cachedIceServers = null;
+
+			// WebCodecs decoder state (worker-based)
+			let decoderWorker = null;
+			let webCodecsSupported = 'VideoDecoder' in window && 'OffscreenCanvas' in window;
+			let frameTimestamp = 0;
+
+			// Stats tracking for WebCodecs
+			let wcFrameCount = 0;
+			let wcLastStatsTime = performance.now();
+			let wcLastFrameTime = 0;
+			let wcDecoderQueueSize = 0;
 
 			async function getIceServers() {
 				// Use cached credentials if available and not expired
@@ -1236,32 +1250,152 @@
 				return [{ urls: 'stun:stun.l.google.com:19302' }];
 			}
 
+			// ===== H.264 Processing (send to worker) =====
+			function sendFrameToWorker(data, timestamp) {
+				if (!decoderWorker) return;
+				// Transfer the buffer to avoid copying
+				const buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+				decoderWorker.postMessage(
+					{
+						type: 'frame',
+						data: { buffer, timestamp },
+					},
+					[buffer],
+				);
+			}
+
+			function createDecoderWorker() {
+				if (!webCodecsSupported) {
+					console.warn('WebCodecs or OffscreenCanvas not supported, falling back to standard WebRTC');
+					return null;
+				}
+
+				try {
+					const worker = new Worker('/video-decoder-worker.js');
+
+					worker.onmessage = (event) => {
+						const { type } = event.data;
+
+						switch (type) {
+							case 'ready':
+								console.log('Decoder worker ready');
+								break;
+
+							case 'frame':
+								// Frame was decoded and rendered
+								wcFrameCount++;
+								wcLastFrameTime = event.data.timestamp;
+
+								// Mark video as connected on first frame
+								if (!videoConnected) {
+									videoPlaceholder.style.display = 'none';
+									videoConnected = true;
+									throttleZone.classList.remove('disabled');
+									steeringZone.classList.remove('disabled');
+									sendVideoStatus(true);
+									if (!playerReady) {
+										readyBtn.disabled = false;
+									}
+								}
+								break;
+
+							case 'stats':
+								wcDecoderQueueSize = event.data.queueSize;
+								break;
+
+							case 'error':
+								console.error('Decoder worker error:', event.data.message);
+								break;
+						}
+					};
+
+					worker.onerror = (e) => {
+						console.error('Worker error:', e);
+					};
+
+					// Transfer canvas control to worker
+					const offscreen = fpvCanvas.transferControlToOffscreen();
+					worker.postMessage({ type: 'init', canvas: offscreen }, [offscreen]);
+
+					return worker;
+				} catch (e) {
+					console.error('Failed to create decoder worker:', e);
+					return null;
+				}
+			}
+
+			// Setup Encoded Transform to intercept raw H.264 frames
+			function setupEncodedStreams(receiver) {
+				if (!receiver.createEncodedStreams) {
+					console.warn('Encoded streams not supported');
+					return false;
+				}
+
+				const { readable, writable } = receiver.createEncodedStreams();
+
+				const transform = new TransformStream({
+					transform: (encodedFrame, controller) => {
+						// Get raw H.264 data and send to worker
+						const data = new Uint8Array(encodedFrame.data);
+						frameTimestamp += 16667; // ~60fps timestamp increment (in microseconds)
+						sendFrameToWorker(data, frameTimestamp);
+
+						// Don't pass to browser decoder - worker handles it
+					},
+				});
+
+				readable
+					.pipeThrough(transform)
+					.pipeTo(writable)
+					.catch((e) => {
+						if (e.name !== 'AbortError') {
+							console.error('Encoded stream error:', e);
+						}
+					});
+
+				return true;
+			}
+			// =====================================
+
 			async function startFpvStream() {
 				if (fpvPeerConnection) {
 					stopFpvStream();
+				}
+
+				// Reset WebCodecs state
+				frameTimestamp = 0;
+				wcFrameCount = 0;
+				wcLastStatsTime = performance.now();
+				wcLastFrameTime = 0;
+
+				// Create decoder worker with OffscreenCanvas
+				if (webCodecsSupported && !decoderWorker) {
+					decoderWorker = createDecoderWorker();
+				} else if (decoderWorker) {
+					// Reset existing worker
+					decoderWorker.postMessage({ type: 'reset' });
 				}
 
 				try {
 					const iceServers = await getIceServers();
 					fpvPeerConnection = new RTCPeerConnection({ iceServers });
 
+					// Track whether we're using WebCodecs path
+					let usingWebCodecs = false;
+
 					fpvPeerConnection.ontrack = (event) => {
-						fpvVideo.srcObject = event.streams[0];
+						console.log('Got track:', event.track.kind);
 
-						// Minimize jitter buffer for lowest latency (may cause glitches on bad network)
-						const receiver = event.receiver;
-						if (receiver && 'playoutDelayHint' in receiver) {
-							receiver.playoutDelayHint = 0; // Request minimum buffering
-						}
+						if (event.track.kind === 'video') {
+							// If we already set up encoded streams, we're done
+							if (usingWebCodecs) {
+								console.log('Using WebCodecs low-latency path');
+								return;
+							}
 
-						videoPlaceholder.style.display = 'none';
-						videoConnected = true;
-						throttleZone.classList.remove('disabled');
-						steeringZone.classList.remove('disabled');
-						sendVideoStatus(true);
-						// Enable ready button when video connects (if not already ready)
-						if (!playerReady) {
-							readyBtn.disabled = false;
+							// Fallback: Use standard video element (higher latency)
+							console.log('WebCodecs not available, using fallback video element');
+							setupFallbackVideo(event.streams[0], event.receiver);
 						}
 					};
 
@@ -1269,12 +1403,12 @@
 						const state = fpvPeerConnection.iceConnectionState;
 						console.log('FPV ICE state:', state);
 						if (state === 'disconnected' || state === 'failed') {
-							// 'disconnected' can be temporary - check if video is actually playing
-							// Only show overlay if video has truly stopped (no frames for 2s)
+							// Check if we're still receiving frames
 							const checkVideoPlaying = () => {
-								// If video is playing and has recent frames, don't show disconnected overlay
-								if (fpvVideo.srcObject && !fpvVideo.paused && fpvVideo.readyState >= 2) {
-									console.log('FPV ICE disconnected but video still playing, ignoring');
+								// For WebCodecs, check if frames are still being decoded
+								const timeSinceLastFrame = performance.now() - wcLastFrameTime;
+								if (videoConnected && timeSinceLastFrame < 1000) {
+									console.log('FPV ICE disconnected but frames still coming, ignoring');
 									return;
 								}
 								// Video actually stopped
@@ -1284,10 +1418,8 @@
 								sendVideoStatus(false);
 							};
 
-							// Wait a moment before declaring disconnected (ICE can recover quickly)
 							setTimeout(checkVideoPlaying, VIDEO_CHECK_DELAY_MS);
 
-							// Try to reconnect video after a longer delay if still disconnected
 							setTimeout(() => {
 								if (
 									!fpvPeerConnection ||
@@ -1299,24 +1431,36 @@
 								}
 							}, VIDEO_RECONNECT_DELAY_MS);
 						} else if (state === 'connected' || state === 'completed') {
-							// ICE reconnected - hide overlay if video is playing
-							if (fpvVideo.srcObject && !fpvVideo.paused) {
+							if (videoConnected) {
 								videoPlaceholder.style.display = 'none';
-								videoConnected = true;
 								sendVideoStatus(true);
 							}
 						}
 					};
 
 					// Add transceivers for receiving video/audio
-					fpvPeerConnection.addTransceiver('video', { direction: 'recvonly' });
+					const videoTransceiver = fpvPeerConnection.addTransceiver('video', { direction: 'recvonly' });
 					fpvPeerConnection.addTransceiver('audio', { direction: 'recvonly' });
+
+					// IMPORTANT: Set up encoded streams IMMEDIATELY after creating transceiver,
+					// BEFORE any signaling happens. This is required by the API.
+					if (webCodecsSupported && decoderWorker && videoTransceiver.receiver.createEncodedStreams) {
+						try {
+							usingWebCodecs = setupEncodedStreams(videoTransceiver.receiver);
+							if (usingWebCodecs) {
+								console.log('Encoded streams set up successfully');
+							}
+						} catch (e) {
+							console.warn('Failed to set up encoded streams:', e);
+							usingWebCodecs = false;
+						}
+					}
 
 					// Create offer
 					const offer = await fpvPeerConnection.createOffer();
 					await fpvPeerConnection.setLocalDescription(offer);
 
-					// Wait for ICE gathering with timeout (TURN gathering can be slow)
+					// Wait for ICE gathering with timeout
 					await new Promise((resolve) => {
 						if (fpvPeerConnection.iceGatheringState === 'complete') {
 							resolve();
@@ -1326,7 +1470,7 @@
 						const timeout = setTimeout(() => {
 							console.log('ICE gathering timeout, proceeding with available candidates');
 							resolve();
-						}, ICE_GATHERING_TIMEOUT_MS); // 2 second max wait
+						}, ICE_GATHERING_TIMEOUT_MS);
 
 						fpvPeerConnection.onicegatheringstatechange = () => {
 							if (fpvPeerConnection.iceGatheringState === 'complete') {
@@ -1363,6 +1507,77 @@
 				}
 			}
 
+			// Fallback video element for browsers without WebCodecs/encoded streams
+			let fallbackVideo = null;
+			let fallbackCanvas = null;
+			let fallbackCtx = null;
+
+			function setupFallbackVideo(stream, receiver) {
+				// Create a separate canvas for fallback mode
+				// (main canvas may have been transferred to worker already)
+				if (!fallbackCanvas) {
+					fallbackCanvas = document.createElement('canvas');
+					fallbackCanvas.style.position = 'absolute';
+					fallbackCanvas.style.width = '100%';
+					fallbackCanvas.style.height = '100%';
+					fallbackCanvas.style.objectFit = 'cover';
+					// Insert before the main canvas
+					fpvCanvas.parentNode.insertBefore(fallbackCanvas, fpvCanvas);
+					fpvCanvas.style.display = 'none';
+					fallbackCtx = fallbackCanvas.getContext('2d');
+				}
+
+				// Create hidden video element for fallback
+				if (!fallbackVideo) {
+					fallbackVideo = document.createElement('video');
+					fallbackVideo.autoplay = true;
+					fallbackVideo.playsInline = true;
+					fallbackVideo.muted = true;
+					fallbackVideo.style.display = 'none';
+					document.body.appendChild(fallbackVideo);
+				}
+
+				fallbackVideo.srcObject = stream;
+
+				// Minimize jitter buffer
+				if (receiver && 'playoutDelayHint' in receiver) {
+					receiver.playoutDelayHint = 0;
+				}
+
+				// Draw video frames to canvas
+				function drawFallback() {
+					if (fallbackVideo && fallbackVideo.readyState >= 2) {
+						if (fallbackCanvas.width !== fallbackVideo.videoWidth || fallbackCanvas.height !== fallbackVideo.videoHeight) {
+							fallbackCanvas.width = fallbackVideo.videoWidth;
+							fallbackCanvas.height = fallbackVideo.videoHeight;
+						}
+						fallbackCtx.drawImage(fallbackVideo, 0, 0);
+						wcFrameCount++;
+						wcLastFrameTime = performance.now();
+
+						if (!videoConnected) {
+							videoPlaceholder.style.display = 'none';
+							videoConnected = true;
+							throttleZone.classList.remove('disabled');
+							steeringZone.classList.remove('disabled');
+							sendVideoStatus(true);
+							if (!playerReady) {
+								readyBtn.disabled = false;
+							}
+						}
+					}
+					requestAnimationFrame(drawFallback);
+				}
+				requestAnimationFrame(drawFallback);
+
+				// Skip to live edge
+				fallbackVideo.onloadedmetadata = () => {
+					if (fallbackVideo.buffered.length > 0) {
+						fallbackVideo.currentTime = fallbackVideo.buffered.end(0);
+					}
+				};
+			}
+
 			// Video stats tracking
 			let videoStatsInterval = null;
 			let lastBytesReceived = 0;
@@ -1374,19 +1589,12 @@
 
 				try {
 					const stats = await fpvPeerConnection.getStats();
-					let fps = 0;
 					let bitrate = 0;
-					let jitterBufferMs = 0;
 					let rttMs = 0;
 					let resolution = '';
 
 					stats.forEach((report) => {
 						if (report.type === 'inbound-rtp' && report.kind === 'video') {
-							// FPS
-							if (report.framesPerSecond) {
-								fps = Math.round(report.framesPerSecond);
-							}
-
 							// Resolution
 							if (report.frameWidth && report.frameHeight) {
 								resolution = `${report.frameWidth}x${report.frameHeight}`;
@@ -1401,15 +1609,9 @@
 							}
 							lastBytesReceived = report.bytesReceived || 0;
 							lastStatsTime = now;
-
-							// Jitter buffer delay (time frames spend waiting to be played)
-							// This is a better proxy for video latency than network RTT
-							if (report.jitterBufferDelay && report.jitterBufferEmittedCount) {
-								jitterBufferMs = Math.round((report.jitterBufferDelay / report.jitterBufferEmittedCount) * 1000);
-							}
 						}
 
-						// RTT from candidate pair (network only, not glass-to-glass)
+						// RTT from candidate pair
 						if (report.type === 'candidate-pair' && report.state === 'succeeded') {
 							if (report.currentRoundTripTime) {
 								rttMs = Math.round(report.currentRoundTripTime * 1000);
@@ -1417,16 +1619,24 @@
 						}
 					});
 
-					// Update display
-					// Estimate video latency: jitter buffer + half RTT (one-way network)
-					// Note: This underestimates true glass-to-glass which includes encode/decode
-					const estimatedLatency = jitterBufferMs + Math.round(rttMs / 2);
+					// Calculate FPS from our WebCodecs frame counter
+					const now = performance.now();
+					const elapsed = (now - wcLastStatsTime) / 1000;
+					const fps = Math.round(wcFrameCount / elapsed);
+					wcFrameCount = 0;
+					wcLastStatsTime = now;
+
+					// Request stats from worker
+					if (decoderWorker) {
+						decoderWorker.postMessage({ type: 'getStats' });
+					}
 
 					const parts = [];
 					if (resolution) parts.push(resolution);
 					if (fps > 0) parts.push(`${fps}fps`);
 					if (bitrate > 0) parts.push(`${bitrate}kbps`);
-					if (estimatedLatency > 0) parts.push(`${estimatedLatency}ms`);
+					if (rttMs > 0) parts.push(`${Math.round(rttMs / 2) + MINIMAL_MEASURED_VIDEO_LATENCY}ms`);
+					if (wcDecoderQueueSize > 0) parts.push(`q:${wcDecoderQueueSize}`);
 
 					videoStatsEl.textContent = parts.length > 0 ? parts.join(' • ') : '';
 				} catch (err) {
@@ -1438,6 +1648,8 @@
 				stopVideoStats();
 				lastBytesReceived = 0;
 				lastStatsTime = 0;
+				wcFrameCount = 0;
+				wcLastStatsTime = performance.now();
 				videoStatsInterval = setInterval(updateVideoStats, 1000);
 			}
 
@@ -1451,18 +1663,25 @@
 
 			function stopFpvStream() {
 				stopVideoStats();
+				// Note: We don't terminate the worker on stop, just reset it
+				// This avoids recreating OffscreenCanvas which can only be transferred once
+				if (decoderWorker) {
+					decoderWorker.postMessage({ type: 'reset' });
+				}
 				if (fpvPeerConnection) {
 					fpvPeerConnection.close();
 					fpvPeerConnection = null;
 				}
-				fpvVideo.srcObject = null;
+				if (fallbackVideo) {
+					fallbackVideo.srcObject = null;
+				}
 				videoConnected = false;
 				videoPlaceholder.innerHTML = '<div class="spinner"></div><span>Connecting video...</span>';
 				videoPlaceholder.style.display = 'flex';
 				throttleZone.classList.add('disabled');
 				steeringZone.classList.add('disabled');
 			}
-			// =============================
+			// =============================================
 
 			// ===== Race Countdown & Timer =====
 			function showCountdown() {
