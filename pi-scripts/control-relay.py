@@ -31,6 +31,7 @@ from bno055_reader import BNO055
 from hall_rpm import HallRPM
 from traction_control import TractionControl
 from yaw_rate_controller import YawRateController
+from slip_angle_watchdog import SlipAngleWatchdog
 
 logging.basicConfig(
     level=logging.INFO,
@@ -124,6 +125,9 @@ traction_enabled = False # Admin toggle for traction control
 stability_ctrl = None    # YawRateController instance
 stability_enabled = False # Admin toggle for stability control
 
+# Slip angle watchdog (shares enable state with stability control)
+slip_watchdog = None     # SlipAngleWatchdog instance
+
 # Heading blend parameters
 SPEED_THRESHOLD_LOW = 1.0   # km/h - below this, use IMU only
 SPEED_THRESHOLD_HIGH = 5.0  # km/h - above this, blend toward GPS
@@ -203,12 +207,22 @@ def broadcast_telemetry():
     global gps_lat, gps_lon, gps_speed, gps_heading, gps_fix
     global imu_heading, imu_calibration, imu_yaw_rate, blended_heading
     global fused_speed
+    global slip_watchdog, stability_enabled
     
     # Blend heading before sending
     blend_heading()
     
     # Fuse GPS + wheel speed
     fuse_speed()
+    
+    # Update slip angle watchdog (10Hz is fine for this)
+    if slip_watchdog and stability_enabled:
+        slip_watchdog.update(
+            heading_imu=blended_heading,
+            course_gps=gps_heading,
+            speed=fused_speed,
+            throttle_input=current_throttle
+        )
     
     # Calculate race time in milliseconds
     if race_state == "racing" and race_start_time:
@@ -743,6 +757,10 @@ async def handle_offer(request):
                         if stability_ctrl and stability_enabled and limited_throttle > 0:
                             limited_throttle = stability_ctrl.apply_to_throttle(limited_throttle)
                         
+                        # Apply slip angle watchdog if enabled (drift/slide recovery)
+                        if slip_watchdog and stability_enabled and limited_throttle > 0:
+                            limited_throttle = slip_watchdog.apply_to_throttle(limited_throttle)
+                        
                         # Repack if throttle was modified
                         if limited_throttle != current_throttle:
                             message = struct.pack('<HBhh', seq, CMD_CTRL, limited_throttle, current_steering)
@@ -787,6 +805,10 @@ async def handle_offer(request):
                             stability_ctrl.enabled = stability_enabled
                             if not stability_enabled:
                                 stability_ctrl.reset()  # Clear any active intervention
+                        if slip_watchdog:
+                            slip_watchdog.enabled = stability_enabled
+                            if not stability_enabled:
+                                slip_watchdog.reset()
                         logger.info(f"Stability control set by player: {stability_enabled}")
                         # Send updated config back to confirm
                         send_config()
@@ -1222,6 +1244,11 @@ async def main():
     stability_ctrl = YawRateController(wheelbase_m=0.32)
     stability_ctrl.enabled = False  # Must be enabled via admin API
     logger.info("Stability control initialized (disabled by default)")
+    
+    # Initialize slip angle watchdog (shares enable with stability control)
+    slip_watchdog = SlipAngleWatchdog()
+    slip_watchdog.enabled = False
+    logger.info("Slip angle watchdog initialized (disabled by default)")
     
     # Start GPS reader loop
     gps_task = asyncio.create_task(gps_reader_loop())
