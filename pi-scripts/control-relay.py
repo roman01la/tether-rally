@@ -30,6 +30,7 @@ from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, R
 from bno055_reader import BNO055
 from hall_rpm import HallRPM
 from traction_control import TractionControl
+from yaw_rate_controller import YawRateController
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,6 +71,7 @@ CMD_KICK = 0x06    # Pi -> Browser: you have been kicked
 CMD_TELEM = 0x07   # Pi -> Clients: telemetry broadcast
 CMD_TURBO = 0x08   # Turbo mode toggle (sent to ESP32)
 CMD_TRACTION = 0x09 # Traction control toggle (browser -> Pi)
+CMD_STABILITY = 0x0A # Stability control toggle (browser -> Pi)
 
 # Race sub-commands (sent as payload after CMD_RACE)
 RACE_START_COUNTDOWN = 0x01
@@ -117,6 +119,10 @@ imu_task = None          # Asyncio task for IMU reading
 # Traction control
 traction_ctrl = None     # TractionControl instance
 traction_enabled = False # Admin toggle for traction control
+
+# Yaw-rate stability control
+stability_ctrl = None    # YawRateController instance
+stability_enabled = False # Admin toggle for stability control
 
 # Heading blend parameters
 SPEED_THRESHOLD_LOW = 1.0   # km/h - below this, use IMU only
@@ -356,6 +362,7 @@ async def imu_reader_loop():
     """Read BNO055 heading and acceleration at 20Hz"""
     global imu_heading, imu_yaw_rate, imu_forward_accel, imu_calibration, imu_valid
     global traction_ctrl, traction_enabled
+    global stability_ctrl, stability_enabled
     
     # Load saved calibration BEFORE init
     saved_cal = load_imu_calibration()
@@ -405,6 +412,14 @@ async def imu_reader_loop():
                     gps_speed=gps_speed,
                     gps_valid=gps_fix,
                     throttle_input=current_throttle
+                )
+            
+            # Update yaw-rate stability control (at IMU rate for fast reaction)
+            if stability_ctrl and stability_enabled and imu_valid:
+                stability_ctrl.update(
+                    yaw_rate=imu_yaw_rate,
+                    speed=fused_speed,
+                    steering_input=current_steering
                 )
             
             # Auto-save calibration when fully calibrated (all 3s)
@@ -701,6 +716,7 @@ async def handle_offer(request):
         def on_message(message):
             global race_state, current_throttle, current_steering
             global traction_ctrl, traction_enabled
+            global stability_ctrl, stability_enabled
             global video_connected, player_ready, turbo_mode
             # New packet format: seq(2) + cmd(1) + payload
             if isinstance(message, bytes) and len(message) >= 3:
@@ -717,13 +733,19 @@ async def handle_offer(request):
                     
                     if race_state == "racing":
                         ctrl_count[0] += 1
+                        limited_throttle = current_throttle
                         
-                        # Apply traction control if enabled
-                        if traction_ctrl and traction_enabled and current_throttle > 0:
-                            limited_throttle = traction_ctrl.apply_to_throttle(current_throttle)
-                            if limited_throttle != current_throttle:
-                                # Repack message with limited throttle
-                                message = struct.pack('<HBhh', seq, CMD_CTRL, limited_throttle, current_steering)
+                        # Apply traction control if enabled (wheelspin prevention)
+                        if traction_ctrl and traction_enabled and limited_throttle > 0:
+                            limited_throttle = traction_ctrl.apply_to_throttle(limited_throttle)
+                        
+                        # Apply stability control if enabled (yaw-rate limiting)
+                        if stability_ctrl and stability_enabled and limited_throttle > 0:
+                            limited_throttle = stability_ctrl.apply_to_throttle(limited_throttle)
+                        
+                        # Repack if throttle was modified
+                        if limited_throttle != current_throttle:
+                            message = struct.pack('<HBhh', seq, CMD_CTRL, limited_throttle, current_steering)
                         
                         forward_to_esp32(message)
                     # else: silently drop control commands (race not active)
@@ -756,6 +778,16 @@ async def handle_offer(request):
                             if not traction_enabled:
                                 traction_ctrl.reset()  # Clear any active slip state
                         logger.info(f"Traction control set by player: {traction_enabled}")
+                        # Send updated config back to confirm
+                        send_config()
+                elif cmd == CMD_STABILITY:  # STABILITY - player toggling yaw-rate control
+                    if len(message) >= 4:
+                        stability_enabled = message[3] == 1
+                        if stability_ctrl:
+                            stability_ctrl.enabled = stability_enabled
+                            if not stability_enabled:
+                                stability_ctrl.reset()  # Clear any active intervention
+                        logger.info(f"Stability control set by player: {stability_enabled}")
                         # Send updated config back to confirm
                         send_config()
         
@@ -970,16 +1002,19 @@ def send_race_command(sub_cmd: int, payload: bytes = b''):
     return True
 
 def send_config():
-    """Send current config (turbo mode, traction control) to browser"""
-    global control_channel, turbo_mode, traction_enabled
+    """Send current config (turbo mode, traction control, stability control) to browser"""
+    global control_channel, turbo_mode, traction_enabled, stability_enabled
     
     if control_channel is None or control_channel.readyState != "open":
         return False
     
-    # Format: seq(2) + cmd(1) + reserved(1) + turbo(1) + traction(1)
-    message = struct.pack('<HBbBB', 0, CMD_CONFIG, 0, 1 if turbo_mode else 0, 1 if traction_enabled else 0)
+    # Format: seq(2) + cmd(1) + reserved(1) + turbo(1) + traction(1) + stability(1)
+    message = struct.pack('<HBbBBB', 0, CMD_CONFIG, 0, 
+                          1 if turbo_mode else 0, 
+                          1 if traction_enabled else 0,
+                          1 if stability_enabled else 0)
     control_channel.send(message)
-    logger.info(f"Sent config: turbo={turbo_mode}, traction={traction_enabled}")
+    logger.info(f"Sent config: turbo={turbo_mode}, traction={traction_enabled}, stability={stability_enabled}")
     return True
 
 def send_turbo_to_esp32():
@@ -1181,6 +1216,12 @@ async def main():
     traction_ctrl = TractionControl()
     traction_ctrl.enabled = False  # Must be enabled via admin API
     logger.info("Traction control initialized (disabled by default)")
+    
+    # Initialize yaw-rate stability control (disabled by default)
+    # Wheelbase: ARRMA Big Rock 3S ≈ 320mm
+    stability_ctrl = YawRateController(wheelbase_m=0.32)
+    stability_ctrl.enabled = False  # Must be enabled via admin API
+    logger.info("Stability control initialized (disabled by default)")
     
     # Start GPS reader loop
     gps_task = asyncio.create_task(gps_reader_loop())

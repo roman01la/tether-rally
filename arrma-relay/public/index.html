@@ -299,6 +299,14 @@
 				border-color: rgba(82, 183, 136, 0.8);
 				color: #fff;
 			}
+			#stability-btn {
+				left: calc(50% - 170px);
+			}
+			#stability-btn.active {
+				background: rgba(90, 103, 216, 0.9);
+				border-color: rgba(120, 133, 246, 0.8);
+				color: #fff;
+			}
 			@keyframes turbo-pulse {
 				0% {
 					opacity: 0.8;
@@ -871,9 +879,10 @@
 				<div id="steering-thumb" class="slider-thumb"></div>
 			</div>
 
-			<div id="instructions">WASD / Arrow keys | E = Turbo | Q = Traction</div>
+			<div id="instructions">WASD / Arrow keys | E = Turbo | Q = Traction | R = Stability</div>
 
 			<!-- Control Buttons -->
+			<button id="stability-btn" class="control-btn disabled" onclick="toggleStability()">⚖️ ESC (R)</button>
 			<button id="traction-btn" class="control-btn disabled" onclick="toggleTraction()">🛞 TC (Q)</button>
 			<button id="turbo-btn" class="control-btn disabled" onclick="toggleTurbo()">🚀 TURBO (E)</button>
 		</div>
@@ -930,6 +939,7 @@
 			const CMD_TELEM = 0x07; // Pi -> Browser: telemetry broadcast
 			const CMD_TURBO = 0x08; // Browser -> Pi: turbo mode toggle
 			const CMD_TRACTION = 0x09; // Browser -> Pi: traction control toggle
+			const CMD_STABILITY = 0x0a; // Browser -> Pi: stability control toggle
 
 			// Race sub-commands
 			const RACE_START_COUNTDOWN = 0x01;
@@ -995,6 +1005,7 @@
 			const keys = new Set();
 			let turboMode = false; // Turbo mode state
 			let tractionMode = false; // Traction control state
+			let stabilityMode = false; // Stability (yaw-rate) control state
 			const keyStep = 1.0;
 			const strStep = 1.0;
 			const strSmoothRate = 0.15; // How fast steering interpolates (0-1, lower = smoother)
@@ -1061,6 +1072,7 @@
 			const waitingText = document.getElementById('waiting-text');
 			const turboBtn = document.getElementById('turbo-btn');
 			const tractionBtn = document.getElementById('traction-btn');
+			const stabilityBtn = document.getElementById('stability-btn');
 
 			let throttleTouchId = null;
 			let steeringTouchId = null;
@@ -1828,14 +1840,18 @@
 			}
 
 			function handleConfigCommand(data) {
-				// Format: seq(2) + cmd(1) + reserved(1) + turbo(1) + traction(1)
+				// Format: seq(2) + cmd(1) + reserved(1) + turbo(1) + traction(1) + stability(1)
 				if (data.byteLength >= 6) {
 					const view = new DataView(data);
 					turboMode = view.getUint8(4) !== 0;
 					tractionMode = view.getUint8(5) !== 0;
+					if (data.byteLength >= 7) {
+						stabilityMode = view.getUint8(6) !== 0;
+					}
 					updateTurboIndicator();
 					updateTractionIndicator();
-					console.log('Config received: turbo =', turboMode, ', traction =', tractionMode);
+					updateStabilityIndicator();
+					console.log('Config received: turbo =', turboMode, ', traction =', tractionMode, ', stability =', stabilityMode);
 				}
 			}
 
@@ -1860,9 +1876,10 @@
 				};
 			}
 
-			// Create turbo and traction toggle features
+			// Create turbo, traction, and stability toggle features
 			const turboFeature = createToggleFeature('turbo', CMD_TURBO, turboBtn);
 			const tractionFeature = createToggleFeature('traction', CMD_TRACTION, tractionBtn);
+			const stabilityFeature = createToggleFeature('stability', CMD_STABILITY, stabilityBtn);
 
 			// Convenience functions for backward compatibility
 			function updateTurboIndicator() {
@@ -1871,11 +1888,17 @@
 			function updateTractionIndicator() {
 				tractionFeature.updateIndicator(tractionMode);
 			}
+			function updateStabilityIndicator() {
+				stabilityFeature.updateIndicator(stabilityMode);
+			}
 			function updateTurboButton() {
 				turboFeature.updateButton();
 			}
 			function updateTractionButton() {
 				tractionFeature.updateButton();
+			}
+			function updateStabilityButton() {
+				stabilityFeature.updateButton();
 			}
 
 			function toggleTurbo() {
@@ -1890,6 +1913,13 @@
 				tractionMode = !tractionMode;
 				tractionFeature.send(tractionMode);
 				updateTractionIndicator();
+			}
+
+			function toggleStability() {
+				if (!isConnected) return;
+				stabilityMode = !stabilityMode;
+				stabilityFeature.send(stabilityMode);
+				updateStabilityIndicator();
 			}
 
 			function handleKicked() {
@@ -2213,6 +2243,7 @@
 					pingInterval = setInterval(sendPing, PING_INTERVAL_MS);
 					updateTurboButton();
 					updateTractionButton();
+					updateStabilityButton();
 				};
 
 				controlChannel.onmessage = (event) => {
@@ -2533,6 +2564,9 @@
 					e.preventDefault();
 				} else if (e.code === 'KeyQ' && !e.repeat) {
 					toggleTraction();
+					e.preventDefault();
+				} else if (e.code === 'KeyR' && !e.repeat) {
+					toggleStability();
 					e.preventDefault();
 				}
 			});
