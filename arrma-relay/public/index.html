@@ -1582,6 +1582,7 @@
 			let videoStatsInterval = null;
 			let lastBytesReceived = 0;
 			let lastStatsTime = 0;
+			let connectionType = ''; // 'p2p' or 'relay'
 			const videoStatsEl = document.getElementById('video-stats');
 
 			async function updateVideoStats() {
@@ -1592,6 +1593,8 @@
 					let bitrate = 0;
 					let rttMs = 0;
 					let resolution = '';
+					let localCandidateId = null;
+					let remoteCandidateId = null;
 
 					stats.forEach((report) => {
 						if (report.type === 'inbound-rtp' && report.kind === 'video') {
@@ -1611,13 +1614,45 @@
 							lastStatsTime = now;
 						}
 
-						// RTT from candidate pair
+						// RTT and candidate IDs from candidate pair
 						if (report.type === 'candidate-pair' && report.state === 'succeeded') {
 							if (report.currentRoundTripTime) {
 								rttMs = Math.round(report.currentRoundTripTime * 1000);
 							}
+							localCandidateId = report.localCandidateId;
+							remoteCandidateId = report.remoteCandidateId;
 						}
 					});
+
+					// Determine connection type and log IPs from candidate types
+					if (localCandidateId && remoteCandidateId && !connectionType) {
+						let localCandidate = null;
+						let remoteCandidate = null;
+						stats.forEach((report) => {
+							if (report.id === localCandidateId) {
+								localCandidate = report;
+								if (report.candidateType === 'relay') {
+									connectionType = 'relay';
+								}
+							}
+							if (report.id === remoteCandidateId) {
+								remoteCandidate = report;
+								if (report.candidateType === 'relay') {
+									connectionType = 'relay';
+								}
+							}
+						});
+						if (!connectionType) {
+							connectionType = 'p2p';
+						}
+						console.log(`Video connection type: ${connectionType}`);
+						if (localCandidate) {
+							console.log(`Video local candidate: ${localCandidate.candidateType} ${localCandidate.address || localCandidate.ip}`);
+						}
+						if (remoteCandidate) {
+							console.log(`Video remote candidate: ${remoteCandidate.candidateType} ${remoteCandidate.address || remoteCandidate.ip}`);
+						}
+					}
 
 					// Calculate FPS from our WebCodecs frame counter
 					const now = performance.now();

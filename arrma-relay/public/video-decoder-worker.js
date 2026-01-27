@@ -1,14 +1,114 @@
 // Video Decoder Web Worker
-// Handles H.264 decoding via WebCodecs and renders to OffscreenCanvas
+// Handles H.264 decoding via WebCodecs and renders to OffscreenCanvas using WebGL
 
 let canvas = null;
-let ctx = null;
+let gl = null;
+let glProgram = null;
+let glTexture = null;
 let videoDecoder = null;
 let codecConfig = null;
 let h264Sps = null;
 let h264Pps = null;
 let frameCount = 0;
 let lastFrameTime = 0;
+
+// ===== WebGL Setup =====
+const VERTEX_SHADER = `
+	attribute vec2 a_position;
+	attribute vec2 a_texCoord;
+	varying vec2 v_texCoord;
+	void main() {
+		gl_Position = vec4(a_position, 0.0, 1.0);
+		v_texCoord = a_texCoord;
+	}
+`;
+
+const FRAGMENT_SHADER = `
+	precision mediump float;
+	uniform sampler2D u_texture;
+	varying vec2 v_texCoord;
+	void main() {
+		gl_FragColor = texture2D(u_texture, v_texCoord);
+	}
+`;
+
+function initWebGL(canvas) {
+	gl = canvas.getContext('webgl', {
+		alpha: false,
+		antialias: false,
+		depth: false,
+		desynchronized: true,
+		preserveDrawingBuffer: false,
+		powerPreference: 'high-performance',
+	});
+
+	if (!gl) {
+		console.error('[Worker] WebGL not available');
+		return false;
+	}
+
+	// Compile shaders
+	const vertShader = gl.createShader(gl.VERTEX_SHADER);
+	gl.shaderSource(vertShader, VERTEX_SHADER);
+	gl.compileShader(vertShader);
+
+	const fragShader = gl.createShader(gl.FRAGMENT_SHADER);
+	gl.shaderSource(fragShader, FRAGMENT_SHADER);
+	gl.compileShader(fragShader);
+
+	// Create program
+	glProgram = gl.createProgram();
+	gl.attachShader(glProgram, vertShader);
+	gl.attachShader(glProgram, fragShader);
+	gl.linkProgram(glProgram);
+	gl.useProgram(glProgram);
+
+	// Set up geometry (full-screen quad)
+	const positions = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
+	const texCoords = new Float32Array([0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0]);
+
+	const posBuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+	gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+	const posLoc = gl.getAttribLocation(glProgram, 'a_position');
+	gl.enableVertexAttribArray(posLoc);
+	gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+	const texBuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, texBuffer);
+	gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+	const texLoc = gl.getAttribLocation(glProgram, 'a_texCoord');
+	gl.enableVertexAttribArray(texLoc);
+	gl.vertexAttribPointer(texLoc, 2, gl.FLOAT, false, 0, 0);
+
+	// Create texture
+	glTexture = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, glTexture);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+	console.log('[Worker] WebGL initialized');
+	return true;
+}
+
+function renderFrame(frame) {
+	// Resize canvas if needed
+	if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
+		canvas.width = frame.displayWidth;
+		canvas.height = frame.displayHeight;
+		gl.viewport(0, 0, canvas.width, canvas.height);
+	}
+
+	// Upload VideoFrame directly as texture (zero-copy on supported platforms)
+	gl.bindTexture(gl.TEXTURE_2D, glTexture);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+
+	// Draw
+	gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+// ========================
 
 // ===== H.264 NAL Unit Parsing =====
 function parseNALUnits(data) {
@@ -211,14 +311,8 @@ function createVideoDecoder() {
 			const now = performance.now();
 			lastFrameTime = now;
 
-			// Resize canvas if needed
-			if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
-				canvas.width = frame.displayWidth;
-				canvas.height = frame.displayHeight;
-			}
-
-			// Draw immediately
-			ctx.drawImage(frame, 0, 0);
+			// Render frame using WebGL
+			renderFrame(frame);
 			frame.close();
 
 			frameCount++;
@@ -249,6 +343,7 @@ function reset() {
 	h264Pps = null;
 	frameCount = 0;
 	lastFrameTime = 0;
+	// Note: WebGL context and resources are preserved across reset
 }
 
 // Handle messages from main thread
@@ -257,11 +352,14 @@ self.onmessage = (event) => {
 
 	switch (type) {
 		case 'init':
-			// Receive the OffscreenCanvas
+			// Receive the OffscreenCanvas and init WebGL
 			canvas = event.data.canvas;
-			ctx = canvas.getContext('2d');
+			if (!initWebGL(canvas)) {
+				self.postMessage({ type: 'error', message: 'WebGL initialization failed' });
+				return;
+			}
 			videoDecoder = createVideoDecoder();
-			console.log('[Worker] Initialized with OffscreenCanvas');
+			console.log('[Worker] Initialized with OffscreenCanvas + WebGL');
 			self.postMessage({ type: 'ready' });
 			break;
 
