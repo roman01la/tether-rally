@@ -528,6 +528,18 @@ static void print_stats(app_ctx_t *ctx)
                rnd_stats.avg_upload_us / 1000.0,
                rnd_stats.avg_total_us / 1000.0);
     }
+
+    /* Print jitter telemetry if available */
+    if (rnd_stats.avg_interval_us > 0)
+    {
+        double actual_fps = 1000000.0 / rnd_stats.avg_interval_us;
+        double target_interval_ms = 1000.0 / rnd_stats.target_fps;
+        printf("[JITTER] interval=%.1fms (%.1ffps) jitter=%.1fms (target=%.1fms)\n",
+               rnd_stats.avg_interval_us / 1000.0,
+               actual_fps,
+               rnd_stats.avg_jitter_us / 1000.0,
+               target_interval_ms);
+    }
 }
 
 int main(int argc, char *argv[])

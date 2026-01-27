@@ -97,6 +97,10 @@ struct fpv_renderer
     bool has_frame;
     bool texture_valid;
 
+    /* Jitter tracking */
+    uint64_t last_frame_time_us;
+    bool have_last_frame_time;
+
     /* Stats */
     fpv_renderer_stats_t stats;
 };
@@ -179,6 +183,10 @@ fpv_renderer_t *fpv_renderer_create(void)
     glGenTextures(1, &r->tex_y);
     glGenTextures(1, &r->tex_uv);
 
+    /* Initialize jitter tracking */
+    r->have_last_frame_time = false;
+    r->stats.target_fps = 60.0;  /* Default target FPS */
+
     return r;
 }
 
@@ -212,6 +220,30 @@ static void update_frame_internal(fpv_renderer_t *r, fpv_decoded_frame_t *frame,
     }
 
     uint64_t upload_start = get_time_us();
+
+    /* Track jitter - measure time between frame arrivals */
+    if (r->have_last_frame_time)
+    {
+        double interval_us = (double)(upload_start - r->last_frame_time_us);
+        double target_interval_us = 1000000.0 / r->stats.target_fps;  /* e.g., 16667us for 60fps */
+        double jitter_us = (interval_us > target_interval_us) 
+                           ? (interval_us - target_interval_us) 
+                           : (target_interval_us - interval_us);
+
+        /* Update exponential moving averages for jitter */
+        if (r->stats.avg_interval_us == 0)
+        {
+            r->stats.avg_interval_us = interval_us;
+            r->stats.avg_jitter_us = jitter_us;
+        }
+        else
+        {
+            r->stats.avg_interval_us = EMA_ALPHA * interval_us + (1.0 - EMA_ALPHA) * r->stats.avg_interval_us;
+            r->stats.avg_jitter_us = EMA_ALPHA * jitter_us + (1.0 - EMA_ALPHA) * r->stats.avg_jitter_us;
+        }
+    }
+    r->last_frame_time_us = upload_start;
+    r->have_last_frame_time = true;
 
     /* Release previous frame */
     if (r->current_frame)

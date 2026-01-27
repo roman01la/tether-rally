@@ -77,6 +77,10 @@ static uint64_t get_time_ms(void)
     return ts.tv_sec * 1000ULL + ts.tv_nsec / 1000000ULL;
 }
 
+/* Frame pacing state */
+static uint64_t g_last_frame_send_time = 0;
+static uint64_t g_target_frame_interval_us = 16667; /* 60fps default */
+
 /* Encoded frame callback - called from rpicam reader thread */
 static void on_encoded_frame(const fpv_rpicam_frame_t *frame, void *userdata)
 {
@@ -84,6 +88,28 @@ static void on_encoded_frame(const fpv_rpicam_frame_t *frame, void *userdata)
 
     if (!g_sender || !g_running)
         return;
+
+    /* Frame pacing: ensure minimum interval between sends to avoid bursts.
+     * This helps smooth out bursty delivery from rpicam-vid pipe buffering. */
+    uint64_t now = frame->timestamp_us;
+    if (g_last_frame_send_time > 0)
+    {
+        uint64_t elapsed = now - g_last_frame_send_time;
+        /* If we're sending too fast, introduce a small delay.
+         * Use 80% of target interval as minimum to allow some catch-up. */
+        uint64_t min_interval = (g_target_frame_interval_us * 80) / 100;
+        if (elapsed < min_interval)
+        {
+            uint64_t delay_us = min_interval - elapsed;
+            /* Cap delay at half a frame interval to avoid accumulating latency */
+            if (delay_us > g_target_frame_interval_us / 2)
+            {
+                delay_us = g_target_frame_interval_us / 2;
+            }
+            usleep((useconds_t)delay_us);
+        }
+    }
+    g_last_frame_send_time = get_time_ms() * 1000; /* Update after potential delay */
 
     /* Convert to sender's frame format */
     fpv_encoded_frame_t send_frame = {
@@ -400,6 +426,9 @@ int main(int argc, char *argv[])
         return 1;
     }
     fpv_sender_set_peer(g_sender, &peer_addr);
+
+    /* Set frame pacing target based on configured FPS */
+    g_target_frame_interval_us = 1000000 / config.fps;
 
     /* Create rpicam (camera + encoder via rpicam-vid) */
     fpv_rpicam_config_t rpicam_cfg = {

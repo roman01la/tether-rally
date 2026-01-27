@@ -24,6 +24,10 @@ typedef struct
     double avg_decode_us;   /* Assembly complete → decode complete */
     double avg_upload_us;   /* Decode complete → texture upload complete */
     double avg_total_us;    /* First packet → texture ready */
+    /* Jitter tracking */
+    double avg_interval_us;  /* Average time between frames */
+    double avg_jitter_us;    /* Average deviation from expected interval */
+    double target_fps;       /* Target FPS for jitter calculation (default 60) */
 } fpv_renderer_stats_t;
 
 /* Create renderer (call after OpenGL context is current) */
