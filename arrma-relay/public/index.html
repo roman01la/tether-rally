@@ -1680,7 +1680,7 @@
 
 					const parts = [];
 					if (resolution) parts.push(resolution);
-					if (fps > 0) parts.push(`${fps}fps`);
+					if (fps > 0) parts.push(`${fps + MINIMAL_MEASURED_VIDEO_LATENCY}fps`);
 					if (bitrate > 0) parts.push(`${bitrate}kbps`);
 					if (rttMs > 0) parts.push(`${Math.round(rttMs / 2) + MINIMAL_MEASURED_VIDEO_LATENCY}ms`);
 					if (wcDecoderQueueSize > 0) parts.push(`q:${wcDecoderQueueSize}`);
