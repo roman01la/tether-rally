@@ -32,6 +32,7 @@ from hall_rpm import HallRPM
 from traction_control import TractionControl
 from yaw_rate_controller import YawRateController
 from slip_angle_watchdog import SlipAngleWatchdog
+from steering_shaper import SteeringShaper
 
 logging.basicConfig(
     level=logging.INFO,
@@ -127,6 +128,9 @@ stability_enabled = False # Admin toggle for stability control
 
 # Slip angle watchdog (shares enable state with stability control)
 slip_watchdog = None     # SlipAngleWatchdog instance
+
+# Steering shaper (latency-aware steering, shares enable with stability)
+steering_shaper = None   # SteeringShaper instance
 
 # Heading blend parameters
 SPEED_THRESHOLD_LOW = 1.0   # km/h - below this, use IMU only
@@ -748,6 +752,15 @@ async def handle_offer(request):
                     if race_state == "racing":
                         ctrl_count[0] += 1
                         limited_throttle = current_throttle
+                        shaped_steering = current_steering
+                        
+                        # Apply steering shaper if enabled (latency-aware steering)
+                        if steering_shaper and stability_enabled:
+                            shaped_steering = steering_shaper.update(
+                                steering_input=current_steering,
+                                speed=fused_speed,
+                                yaw_rate=imu_yaw_rate
+                            )
                         
                         # Apply traction control if enabled (wheelspin prevention)
                         if traction_ctrl and traction_enabled and limited_throttle > 0:
@@ -761,9 +774,9 @@ async def handle_offer(request):
                         if slip_watchdog and stability_enabled and limited_throttle > 0:
                             limited_throttle = slip_watchdog.apply_to_throttle(limited_throttle)
                         
-                        # Repack if throttle was modified
-                        if limited_throttle != current_throttle:
-                            message = struct.pack('<HBhh', seq, CMD_CTRL, limited_throttle, current_steering)
+                        # Repack if throttle or steering was modified
+                        if limited_throttle != current_throttle or shaped_steering != current_steering:
+                            message = struct.pack('<HBhh', seq, CMD_CTRL, limited_throttle, shaped_steering)
                         
                         forward_to_esp32(message)
                     # else: silently drop control commands (race not active)
@@ -809,6 +822,10 @@ async def handle_offer(request):
                             slip_watchdog.enabled = stability_enabled
                             if not stability_enabled:
                                 slip_watchdog.reset()
+                        if steering_shaper:
+                            steering_shaper.enabled = stability_enabled
+                            if not stability_enabled:
+                                steering_shaper.reset()
                         logger.info(f"Stability control set by player: {stability_enabled}")
                         # Send updated config back to confirm
                         send_config()
@@ -1249,6 +1266,11 @@ async def main():
     slip_watchdog = SlipAngleWatchdog()
     slip_watchdog.enabled = False
     logger.info("Slip angle watchdog initialized (disabled by default)")
+    
+    # Initialize steering shaper (shares enable with stability control)
+    steering_shaper = SteeringShaper()
+    steering_shaper.enabled = False
+    logger.info("Steering shaper initialized (disabled by default)")
     
     # Start GPS reader loop
     gps_task = asyncio.create_task(gps_reader_loop())
