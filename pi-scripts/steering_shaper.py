@@ -42,20 +42,21 @@ class SteeringShaper:
         self.steering_limit_low_speed = 1.0    # 100% at low speed
         
         # Steering range at high speed (fraction of full, 0-1)
-        self.steering_limit_high_speed = 0.4   # 40% at high speed
+        self.steering_limit_high_speed = 0.5   # 50% at high speed (was 40%, more fun)
         
         # Speed thresholds for interpolation (km/h)
-        self.limit_speed_low = 5.0    # Below this: full steering
-        self.limit_speed_high = 35.0  # Above this: minimum steering
+        self.limit_speed_low = 8.0    # Below this: full steering (raised)
+        self.limit_speed_high = 40.0  # Above this: minimum steering (raised)
         
         # === Rate Limiting ===
         
         # Max steering change per second (in steering units, full range is 2000)
         # At 50Hz, this is max_rate / 50 per update
-        self.max_steering_rate = 3000  # units/sec (allows full sweep in ~0.67s)
+        # 4000/sec = full sweep in 0.5s - responsive but not snappy
+        self.max_steering_rate = 4000  # units/sec (was 3000)
         
         # Faster rate limit for returning toward center (feels more natural)
-        self.max_center_rate = 4500    # units/sec (faster return to center)
+        self.max_center_rate = 6000    # units/sec (faster return to center)
         
         # === Counter-Steer Assist ===
         
@@ -66,17 +67,17 @@ class SteeringShaper:
         self.counter_steer_yaw_threshold = 20.0
         
         # Assist strength (0-1, fraction of "ideal" counter-steer)
-        # 0.15 = 15% assist, very gentle
-        self.counter_steer_strength = 0.15
+        # 0.10 = 10% assist, very subtle - just a hint
+        self.counter_steer_strength = 0.10
         
         # Only assist when input is near neutral (abs < this)
-        self.neutral_threshold = 100  # ~10% of full range
+        self.neutral_threshold = 150  # ~15% of full range (wider neutral zone)
         
         # Minimum speed for counter-steer assist
-        self.counter_steer_min_speed = 8.0  # km/h
+        self.counter_steer_min_speed = 10.0  # km/h (raised)
         
         # Max counter-steer assist (prevents over-correction)
-        self.max_counter_steer = 200  # ~20% of full range
+        self.max_counter_steer = 150  # ~15% of full range (reduced)
         
         # === Smoothing ===
         

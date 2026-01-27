@@ -632,6 +632,61 @@ def load_turn_credentials():
     except Exception as e:
         logger.warning(f"Could not load TURN credentials: {e}")
 
+# ----- Stability Intervention Logging -----
+
+# Rate-limit logging to avoid spam (log at most every 500ms when active)
+_last_intervention_log = 0
+_intervention_active = False
+
+def log_stability_interventions(orig_throttle, new_throttle, orig_steering, new_steering):
+    """Log stability interventions for tuning. Rate-limited to avoid spam."""
+    global _last_intervention_log, _intervention_active
+    global stability_ctrl, slip_watchdog, steering_shaper, traction_ctrl
+    global fused_speed, imu_yaw_rate, blended_heading, gps_heading
+    
+    now = time.time()
+    throttle_cut = orig_throttle - new_throttle
+    steering_change = new_steering - orig_steering
+    
+    # Check if any system is actively intervening
+    intervening = False
+    reasons = []
+    
+    if stability_ctrl and stability_ctrl.intervention_type != "none":
+        intervening = True
+        reasons.append(f"yaw:{stability_ctrl.intervention_type}(err={stability_ctrl.yaw_error:.0f}°/s)")
+    
+    if slip_watchdog and slip_watchdog.intervention_active:
+        intervening = True
+        reasons.append(f"slip:{slip_watchdog.slip_angle:.0f}°")
+    
+    if traction_ctrl and traction_ctrl.slip_detected:
+        intervening = True
+        reasons.append(f"traction:{traction_ctrl.slip_reason}")
+    
+    if steering_shaper:
+        if steering_shaper.rate_limited:
+            reasons.append("steer:rate")
+        if steering_shaper.counter_steer_active:
+            reasons.append(f"steer:assist({steering_shaper.counter_steer_amount})")
+    
+    # Log when intervention starts, ends, or periodically while active
+    if intervening:
+        if not _intervention_active or (now - _last_intervention_log) > 0.5:
+            reason_str = ", ".join(reasons) if reasons else "unknown"
+            logger.info(
+                f"STABILITY: thr {orig_throttle}→{new_throttle} (-{throttle_cut}), "
+                f"str {orig_steering}→{new_steering}, "
+                f"spd={fused_speed:.1f}km/h, yaw={imu_yaw_rate:.0f}°/s, "
+                f"reason=[{reason_str}]"
+            )
+            _last_intervention_log = now
+        _intervention_active = True
+    elif _intervention_active:
+        # Log when intervention ends
+        logger.info("STABILITY: intervention ended, full control restored")
+        _intervention_active = False
+
 # ----- ESP32 Communication -----
 
 def forward_to_esp32(message: bytes):
@@ -773,6 +828,12 @@ async def handle_offer(request):
                         # Apply slip angle watchdog if enabled (drift/slide recovery)
                         if slip_watchdog and stability_enabled and limited_throttle > 0:
                             limited_throttle = slip_watchdog.apply_to_throttle(limited_throttle)
+                        
+                        # Log interventions for tuning (rate-limited to avoid spam)
+                        log_stability_interventions(
+                            current_throttle, limited_throttle,
+                            current_steering, shaped_steering
+                        )
                         
                         # Repack if throttle or steering was modified
                         if limited_throttle != current_throttle or shaped_steering != current_steering:

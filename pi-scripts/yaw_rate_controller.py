@@ -79,19 +79,20 @@ class YawRateController:
         # Error = r_des - r_actual
         # Positive error: understeering (car not rotating enough)
         # Negative error: oversteering (car rotating too much)
-        self.oversteer_threshold = 25.0   # deg/s over desired = oversteer
-        self.understeer_threshold = 15.0  # deg/s under desired = understeer
+        self.oversteer_threshold = 35.0   # deg/s over desired = oversteer (raised for fun)
+        self.understeer_threshold = 25.0  # deg/s under desired = understeer (raised)
 
-        # Throttle cut rates (per update cycle)
-        self.oversteer_cut_rate = 0.15      # Aggressive cut on oversteer
-        self.understeer_cut_rate = 0.05     # Mild cut on understeer
+        # Throttle cut rates (per update cycle at 20Hz)
+        # Soft ramp: 0.025/update = 0.5/sec = 400ms to 50%
+        self.oversteer_cut_rate = 0.025     # Soft ramp on oversteer
+        self.understeer_cut_rate = 0.015    # Very mild on understeer
 
         # Minimum throttle multiplier (never cut below this)
-        self.min_throttle_mult = 0.30       # 30% is floor
+        self.min_throttle_mult = 0.50       # 50% floor - keep some power
 
-        # Recovery rate (per update)
-        self.recovery_rate = 0.03           # Gradual recovery when stable
-        self.fast_recovery_rate = 0.08      # Faster when clearly stable
+        # Recovery rate (per update) - fast recovery feels better
+        self.recovery_rate = 0.05           # ~400ms full recovery
+        self.fast_recovery_rate = 0.10      # ~200ms when clearly stable
 
         # Virtual brake: additional braking on severe oversteer
         self.virtual_brake_enabled = True

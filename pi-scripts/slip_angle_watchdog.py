@@ -58,30 +58,31 @@ class SlipAngleWatchdog:
         
         # Slip angle threshold (degrees) to trigger watchdog
         # Below this, car is considered "on track"
-        self.slip_angle_threshold = 25.0
+        self.slip_angle_threshold = 35.0  # Raised - allow more drift before intervening
         
         # Time (seconds) slip must persist before intervention
-        # Prevents reacting to brief transients
-        self.slip_duration_threshold = 0.15  # 150ms
+        # Prevents reacting to brief transients - longer = more fun
+        self.slip_duration_threshold = 0.25  # 250ms - allow quick slides
         
         # Minimum throttle to consider intervention
         # No point cutting throttle if already coasting
-        self.min_throttle_for_intervention = 200
+        self.min_throttle_for_intervention = 300  # Raised threshold
         
         # === Throttle Control ===
         
         # Target throttle multiplier during slip recovery
         # Not zero - we want "grip recovery" not "emergency stop"
-        self.recovery_target = 0.5  # 50% throttle during recovery
+        self.recovery_target = 0.6  # 60% throttle during recovery (more power)
         
         # How fast to reduce throttle (per update, ~10Hz assumed)
-        self.reduction_rate = 0.08  # 8% per cycle
+        # Soft ramp: 0.04/update = 0.4/sec = 400ms to reach target
+        self.reduction_rate = 0.04  # 4% per cycle - smooth ramp
         
-        # How fast to recover when slip ends
-        self.recovery_rate = 0.05   # 5% per cycle (slower than reduction)
+        # How fast to recover when slip ends - fast recovery feels better
+        self.recovery_rate = 0.08   # 8% per cycle - quick recovery
         
         # Minimum multiplier (floor)
-        self.min_multiplier = 0.4
+        self.min_multiplier = 0.5   # 50% floor - keep some power
         
         # === State ===
         
