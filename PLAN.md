@@ -69,7 +69,7 @@ A web-based platform where users can remotely control a real RC car over the int
    - MediaMTX for WebRTC streaming
    - Cloudflare Tunnel for internet access
    - Cloudflare TURN for NAT traversal
-   - 720p @ 2Mbps @ 30fps H.264
+   - 720p @ 2Mbps @ 60fps H.264
    - ~150ms glass-to-glass latency over 4G
 
 6. **Admin Dashboard** ✅ (Implemented)
@@ -267,7 +267,7 @@ Note: Neutral voltages calibrated for ESP32 VDD ~3.12V (low TX batteries)
 │  │            │ shared      │      │  └───────────────────────────────┘  │ │
 │  │  ┌─────────▼─────────┐   │      │  ┌───────────────────────────────┐  │ │
 │  │  │ Control Loop      │   │      │  │   Camera Module 3 (Wide)      │  │ │
-│  │  │    (Core 1)       │   │      │  │   720p @ 30fps                │  │ │
+│  │  │    (Core 1)       │   │      │  │   720p @ 60fps                │  │ │
 │  │  │  - 200 Hz output  │   │      │  └───────────────┬───────────────┘  │ │
 │  │  │  - EMA smoothing  │   │      │                  │                  │ │
 │  │  │  - Slew limiting  │   │      │  ┌───────────────▼───────────────┐  │ │
@@ -296,7 +296,7 @@ Note: Neutral voltages calibrated for ESP32 VDD ~3.12V (low TX batteries)
 | ---------------------------- | --------------------------- | ---------- | --------- |
 | Controls: Browser → Pi → ESP | DataChannel → UDP (7 bytes) | 50 Hz      | ~60-100ms |
 | Latency Ping: Browser ↔ ESP  | DataChannel ↔ UDP           | 2 Hz       | measured  |
-| Video: Pi → Browser          | WebRTC H.264                | 30 fps     | ~10-20ms  |
+| Video: Pi → Browser          | WebRTC H.264                | 60 fps     | ~10-20ms  |
 | WHEP Signaling: Browser ↔ Pi | HTTPS (via Tunnel)          | On-connect | -         |
 | TURN Relay: Pi ↔ Browser     | UDP (via Cloudflare)        | Continuous | ~5-10ms   |
 
@@ -330,7 +330,7 @@ paths:
     source: rpiCamera
     rpiCameraWidth: 1280
     rpiCameraHeight: 720
-    rpiCameraFPS: 30
+    rpiCameraFPS: 60
     rpiCameraBitrate: 2000000
 ```
 
@@ -456,7 +456,7 @@ TOKEN_SECRET="your-secret-key" node generate-token.js 60
    - P2P connection via TURN for NAT traversal
    - Authenticates users via HMAC token
    - Routes controls to ESP32 via UDP
-   - ~50-100ms control latency
+   - ~30-100ms control latency
 
 2. **Tournament Service** 🔲 (Planned)
    - Manages race queue

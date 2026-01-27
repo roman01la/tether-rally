@@ -233,10 +233,16 @@
 			}
 
 			/* Shared control button styles */
-			.control-btn {
+			#control-buttons-container {
 				position: absolute;
 				bottom: 40px;
+				left: 50%;
 				transform: translateX(-50%);
+				display: flex;
+				gap: 15px;
+				z-index: 20;
+			}
+			.control-btn {
 				padding: 12px 24px;
 				border-radius: 30px;
 				border: 2px solid var(--color-border);
@@ -248,7 +254,6 @@
 				backdrop-filter: blur(10px);
 				-webkit-backdrop-filter: blur(10px);
 				transition: all 0.2s;
-				z-index: 20;
 			}
 			.control-btn:hover {
 				background: var(--color-panel-hover);
@@ -283,24 +288,15 @@
 				z-index: 20;
 				pointer-events: none;
 			}
-			#turbo-btn {
-				left: calc(50% + 80px);
-			}
 			#turbo-btn.active {
 				background: rgba(255, 140, 0, 0.9);
 				border-color: var(--color-turbo-border);
 				color: #000;
 			}
-			#traction-btn {
-				left: calc(50% - 80px);
-			}
 			#traction-btn.active {
 				background: rgba(64, 145, 108, 0.9);
 				border-color: rgba(82, 183, 136, 0.8);
 				color: #fff;
-			}
-			#stability-btn {
-				left: calc(50% - 170px);
 			}
 			#stability-btn.active {
 				background: rgba(90, 103, 216, 0.9);
@@ -770,6 +766,277 @@
 				color: var(--color-accent-light);
 				text-decoration: underline;
 			}
+
+			/* Debug Overlay Panel */
+			#debug-overlay {
+				position: absolute;
+				top: 90px;
+				left: 10px;
+				width: 280px;
+				background: rgba(10, 10, 20, 0.85);
+				border: 1px solid rgba(100, 100, 140, 0.4);
+				border-radius: 8px;
+				padding: 10px;
+				font-family: monospace;
+				font-size: 11px;
+				color: #ccc;
+				z-index: 30;
+				backdrop-filter: blur(8px);
+				-webkit-backdrop-filter: blur(8px);
+				display: none;
+				max-height: calc(100vh - 200px);
+				overflow-y: auto;
+			}
+			#debug-overlay.active {
+				display: block;
+			}
+			#debug-overlay h3 {
+				margin: 0 0 8px 0;
+				font-size: 12px;
+				color: #888;
+				text-transform: uppercase;
+				letter-spacing: 1px;
+				border-bottom: 1px solid rgba(100, 100, 140, 0.3);
+				padding-bottom: 4px;
+			}
+			.debug-section {
+				margin-bottom: 12px;
+			}
+			.debug-section-title {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				margin-bottom: 6px;
+				font-weight: bold;
+				font-size: 11px;
+			}
+			.debug-status-dot {
+				width: 8px;
+				height: 8px;
+				border-radius: 50%;
+				background: #444;
+			}
+			.debug-status-dot.idle {
+				background: #3a5;
+			}
+			.debug-status-dot.active {
+				background: #fa3;
+			}
+			.debug-status-dot.critical {
+				background: #f33;
+			}
+			.debug-row {
+				display: flex;
+				justify-content: space-between;
+				padding: 2px 0;
+				border-bottom: 1px solid rgba(80, 80, 100, 0.2);
+			}
+			.debug-label {
+				color: #888;
+			}
+			.debug-value {
+				color: #ddd;
+				text-align: right;
+			}
+			.debug-value.positive {
+				color: #5f5;
+			}
+			.debug-value.negative {
+				color: #f55;
+			}
+			.debug-value.warning {
+				color: #fa3;
+			}
+
+			/* Throttle Pipeline Visualization */
+			.throttle-pipeline {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+				margin: 8px 0;
+				font-size: 10px;
+			}
+			.pipeline-stage {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: 2px;
+			}
+			.pipeline-bar {
+				width: 30px;
+				height: 60px;
+				background: rgba(40, 40, 60, 0.8);
+				border-radius: 3px;
+				position: relative;
+				overflow: hidden;
+			}
+			.pipeline-fill {
+				position: absolute;
+				bottom: 0;
+				left: 0;
+				right: 0;
+				background: linear-gradient(to top, #3a5, #5c7);
+				transition: height 0.1s;
+			}
+			.pipeline-fill.cut {
+				background: linear-gradient(to top, #a53, #c75);
+			}
+			.pipeline-label {
+				font-size: 8px;
+				color: #666;
+				text-align: center;
+				max-width: 32px;
+			}
+			.pipeline-arrow {
+				color: #444;
+				font-size: 14px;
+			}
+
+			/* Yaw Rate Comparison */
+			.yaw-comparison {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				margin: 8px 0;
+				padding: 6px;
+				background: rgba(30, 30, 50, 0.6);
+				border-radius: 4px;
+			}
+			.yaw-bar-container {
+				flex: 1;
+				height: 20px;
+				background: rgba(40, 40, 60, 0.8);
+				border-radius: 3px;
+				position: relative;
+				overflow: hidden;
+			}
+			.yaw-center-line {
+				position: absolute;
+				left: 50%;
+				top: 0;
+				bottom: 0;
+				width: 1px;
+				background: #666;
+			}
+			.yaw-desired-marker {
+				position: absolute;
+				top: 2px;
+				bottom: 2px;
+				width: 3px;
+				background: #5af;
+				border-radius: 1px;
+				transition: left 0.1s;
+			}
+			.yaw-actual-marker {
+				position: absolute;
+				top: 2px;
+				bottom: 2px;
+				width: 3px;
+				background: #fa5;
+				border-radius: 1px;
+				transition: left 0.1s;
+			}
+			.yaw-label {
+				font-size: 9px;
+				color: #888;
+				width: 40px;
+				text-align: right;
+			}
+			.yaw-legend {
+				display: flex;
+				justify-content: center;
+				gap: 12px;
+				font-size: 9px;
+				color: #888;
+				margin-top: 4px;
+			}
+			.yaw-legend span {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+			}
+			.yaw-legend .dot-desired {
+				width: 6px;
+				height: 6px;
+				background: #5af;
+				border-radius: 1px;
+			}
+			.yaw-legend .dot-actual {
+				width: 6px;
+				height: 6px;
+				background: #fa5;
+				border-radius: 1px;
+			}
+
+			/* Slip Angle Gauge */
+			.slip-gauge {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				margin: 8px 0;
+			}
+			.slip-gauge-arc {
+				width: 80px;
+				height: 44px;
+				position: relative;
+				overflow: hidden;
+			}
+			.slip-gauge-bg {
+				position: absolute;
+				bottom: 0;
+				left: 0;
+				width: 80px;
+				height: 80px;
+				border-radius: 50%;
+				background: conic-gradient(from 180deg, #3a5 0deg, #3a5 55deg, #fa3 55deg, #fa3 70deg, #f33 70deg, #f33 90deg, transparent 90deg);
+				opacity: 0.3;
+			}
+			.slip-gauge-needle {
+				position: absolute;
+				bottom: 0;
+				left: 50%;
+				width: 2px;
+				height: 36px;
+				background: #fff;
+				transform-origin: bottom center;
+				transition: transform 0.1s;
+				border-radius: 1px;
+			}
+			.slip-gauge-center {
+				position: absolute;
+				bottom: -4px;
+				left: 50%;
+				transform: translateX(-50%);
+				width: 8px;
+				height: 8px;
+				background: #fff;
+				border-radius: 50%;
+			}
+			.slip-gauge-value {
+				font-size: 16px;
+				font-weight: bold;
+				min-width: 50px;
+			}
+			.slip-gauge-label {
+				font-size: 9px;
+				color: #888;
+			}
+			.slip-threshold-label {
+				position: absolute;
+				font-size: 7px;
+				color: #666;
+			}
+
+			/* Debug toggle hint */
+			#debug-hint {
+				position: absolute;
+				top: 90px;
+				left: 10px;
+				font-size: 10px;
+				color: rgba(255, 255, 255, 0.3);
+				z-index: 25;
+				pointer-events: none;
+			}
 		</style>
 	</head>
 	<body>
@@ -879,12 +1146,132 @@
 				<div id="steering-thumb" class="slider-thumb"></div>
 			</div>
 
-			<div id="instructions">WASD / Arrow keys | E = Turbo | Q = Traction | R = Stability</div>
+			<div id="instructions">WASD / Arrow keys | E = Turbo | Q = Traction | R = Stability | C = Debug</div>
 
 			<!-- Control Buttons -->
-			<button id="stability-btn" class="control-btn disabled" onclick="toggleStability()">⚖️ ESC (R)</button>
-			<button id="traction-btn" class="control-btn disabled" onclick="toggleTraction()">🛞 TC (Q)</button>
-			<button id="turbo-btn" class="control-btn disabled" onclick="toggleTurbo()">🚀 TURBO (E)</button>
+			<div id="control-buttons-container">
+				<button id="stability-btn" class="control-btn disabled" onclick="toggleStability()">⚖️ ESC (R)</button>
+				<button id="traction-btn" class="control-btn disabled" onclick="toggleTraction()">🛞 TC (Q)</button>
+				<button id="turbo-btn" class="control-btn disabled" onclick="toggleTurbo()">🚀 TURBO (E)</button>
+			</div>
+
+			<!-- Debug Overlay -->
+			<div id="debug-hint">Press D for debug</div>
+			<div id="debug-overlay">
+				<h3>🔧 Stability Debug</h3>
+
+				<!-- Throttle Pipeline -->
+				<div class="debug-section">
+					<div class="debug-section-title">Throttle Pipeline</div>
+					<div class="throttle-pipeline">
+						<div class="pipeline-stage">
+							<div class="pipeline-bar"><div class="pipeline-fill" id="pipe-input"></div></div>
+							<div class="pipeline-label">Input</div>
+						</div>
+						<span class="pipeline-arrow">→</span>
+						<div class="pipeline-stage">
+							<div class="pipeline-bar"><div class="pipeline-fill" id="pipe-tc"></div></div>
+							<div class="pipeline-label">TC</div>
+						</div>
+						<span class="pipeline-arrow">→</span>
+						<div class="pipeline-stage">
+							<div class="pipeline-bar"><div class="pipeline-fill" id="pipe-yrc"></div></div>
+							<div class="pipeline-label">ESC</div>
+						</div>
+						<span class="pipeline-arrow">→</span>
+						<div class="pipeline-stage">
+							<div class="pipeline-bar"><div class="pipeline-fill" id="pipe-saw"></div></div>
+							<div class="pipeline-label">Slip</div>
+						</div>
+						<span class="pipeline-arrow">→</span>
+						<div class="pipeline-stage">
+							<div class="pipeline-bar"><div class="pipeline-fill" id="pipe-final"></div></div>
+							<div class="pipeline-label">Final</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Traction Control -->
+				<div class="debug-section">
+					<div class="debug-section-title">
+						<div class="debug-status-dot" id="tc-status-dot"></div>
+						Traction Control
+					</div>
+					<div class="debug-row"><span class="debug-label">Slip Detected</span><span class="debug-value" id="tc-slip">—</span></div>
+					<div class="debug-row"><span class="debug-label">Reason</span><span class="debug-value" id="tc-reason">—</span></div>
+					<div class="debug-row"><span class="debug-label">Multiplier</span><span class="debug-value" id="tc-mult">—</span></div>
+					<div class="debug-row"><span class="debug-label">Wheel Accel</span><span class="debug-value" id="tc-wheel-accel">—</span></div>
+					<div class="debug-row">
+						<span class="debug-label">Vehicle Accel</span><span class="debug-value" id="tc-vehicle-accel">—</span>
+					</div>
+					<div class="debug-row"><span class="debug-label">Slip Ratio</span><span class="debug-value" id="tc-slip-ratio">—</span></div>
+				</div>
+
+				<!-- Yaw Rate Controller -->
+				<div class="debug-section">
+					<div class="debug-section-title">
+						<div class="debug-status-dot" id="yrc-status-dot"></div>
+						Yaw Rate (ESC)
+					</div>
+					<div class="debug-row"><span class="debug-label">Intervention</span><span class="debug-value" id="yrc-intervention">—</span></div>
+					<div class="debug-row"><span class="debug-label">Multiplier</span><span class="debug-value" id="yrc-mult">—</span></div>
+					<div class="debug-row"><span class="debug-label">Virtual Brake</span><span class="debug-value" id="yrc-brake">—</span></div>
+					<div class="yaw-comparison">
+						<span class="yaw-label">Yaw °/s</span>
+						<div class="yaw-bar-container">
+							<div class="yaw-center-line"></div>
+							<div class="yaw-desired-marker" id="yaw-desired"></div>
+							<div class="yaw-actual-marker" id="yaw-actual"></div>
+						</div>
+					</div>
+					<div class="yaw-legend">
+						<span
+							><div class="dot-desired"></div>
+							Desired</span
+						>
+						<span
+							><div class="dot-actual"></div>
+							Actual</span
+						>
+					</div>
+					<div class="debug-row"><span class="debug-label">Desired</span><span class="debug-value" id="yrc-desired">—</span></div>
+					<div class="debug-row"><span class="debug-label">Actual</span><span class="debug-value" id="yrc-actual">—</span></div>
+					<div class="debug-row"><span class="debug-label">Error</span><span class="debug-value" id="yrc-error">—</span></div>
+				</div>
+
+				<!-- Slip Angle Watchdog -->
+				<div class="debug-section">
+					<div class="debug-section-title">
+						<div class="debug-status-dot" id="saw-status-dot"></div>
+						Slip Angle
+					</div>
+					<div class="slip-gauge">
+						<div class="slip-gauge-arc">
+							<div class="slip-gauge-bg"></div>
+							<div class="slip-gauge-needle" id="slip-needle"></div>
+							<div class="slip-gauge-center"></div>
+						</div>
+						<div>
+							<div class="slip-gauge-value" id="saw-angle">0°</div>
+							<div class="slip-gauge-label">Heading vs Course</div>
+						</div>
+					</div>
+					<div class="debug-row"><span class="debug-label">Intervention</span><span class="debug-value" id="saw-intervention">—</span></div>
+					<div class="debug-row"><span class="debug-label">Multiplier</span><span class="debug-value" id="saw-mult">—</span></div>
+				</div>
+
+				<!-- Steering Shaper -->
+				<div class="debug-section">
+					<div class="debug-section-title">
+						<div class="debug-status-dot" id="ss-status-dot"></div>
+						Steering Shaper
+					</div>
+					<div class="debug-row"><span class="debug-label">Limit</span><span class="debug-value" id="ss-limit">—</span></div>
+					<div class="debug-row"><span class="debug-label">Rate Limited</span><span class="debug-value" id="ss-rate">—</span></div>
+					<div class="debug-row"><span class="debug-label">Counter-Steer</span><span class="debug-value" id="ss-counter">—</span></div>
+					<div class="debug-row"><span class="debug-label">Assist Amount</span><span class="debug-value" id="ss-assist">—</span></div>
+				</div>
+			</div>
 		</div>
 
 		<!-- Optional: Load config.js for deployment-specific URLs -->
@@ -940,6 +1327,7 @@
 			const CMD_TURBO = 0x08; // Browser -> Pi: turbo mode toggle
 			const CMD_TRACTION = 0x09; // Browser -> Pi: traction control toggle
 			const CMD_STABILITY = 0x0a; // Browser -> Pi: stability control toggle
+			const CMD_DEBUG_TELEM = 0x0b; // Pi -> Browser: debug telemetry (stability systems)
 
 			// Race sub-commands
 			const RACE_START_COUNTDOWN = 0x01;
@@ -1006,6 +1394,7 @@
 			let turboMode = false; // Turbo mode state
 			let tractionMode = false; // Traction control state
 			let stabilityMode = false; // Stability (yaw-rate) control state
+			let debugOverlayVisible = false; // Debug overlay visibility
 			const keyStep = 1.0;
 			const strStep = 1.0;
 			const strSmoothRate = 0.15; // How fast steering interpolates (0-1, lower = smoother)
@@ -1044,6 +1433,18 @@
 			//   sw: { lat: 1, lon: 1 },  // Southwest corner
 			//   ne: { lat: 1, lon: 1 }   // Northeast corner
 			// };
+
+			// Debug telemetry state (stability systems)
+			let debugTelem = {
+				// Traction Control
+				tc: { slipDetected: false, slipReason: 0, throttleMult: 100, wheelAccel: 0, vehicleAccel: 0, slipRatio: 0 },
+				// Yaw Rate Controller
+				yrc: { intervention: 0, throttleMult: 100, virtualBrake: 0, yawDesired: 0, yawActual: 0, yawError: 0 },
+				// Slip Angle Watchdog
+				saw: { slipAngle: 0, intervention: false, throttleMult: 100 },
+				// Steering Shaper
+				ss: { steeringLimit: 100, rateLimited: false, counterSteer: false, counterAmount: 0 },
+			};
 
 			// DOM elements
 			const loginScreen = document.getElementById('login-screen');
@@ -1976,6 +2377,191 @@
 				updateCompassHUD();
 			}
 
+			function handleDebugTelemetry(view) {
+				// Parse debug telemetry packet (31 bytes total)
+				// Format: seq(2) + cmd(1) + TC(9) + YRC(10) + SAW(4) + SS(5)
+
+				// Traction Control (offset 3-11)
+				debugTelem.tc.slipDetected = view.getUint8(3) === 1;
+				debugTelem.tc.slipReason = view.getUint8(4);
+				debugTelem.tc.throttleMult = view.getUint8(5);
+				debugTelem.tc.wheelAccel = view.getInt16(6, true) / 10;
+				debugTelem.tc.vehicleAccel = view.getInt16(8, true) / 10;
+				debugTelem.tc.slipRatio = view.getInt16(10, true) / 100;
+
+				// Yaw Rate Controller (offset 12-21)
+				debugTelem.yrc.intervention = view.getUint8(12);
+				debugTelem.yrc.throttleMult = view.getUint8(13);
+				debugTelem.yrc.virtualBrake = view.getUint16(14, true);
+				debugTelem.yrc.yawDesired = view.getInt16(16, true) / 10;
+				debugTelem.yrc.yawActual = view.getInt16(18, true) / 10;
+				debugTelem.yrc.yawError = view.getInt16(20, true) / 10;
+
+				// Slip Angle Watchdog (offset 22-25)
+				debugTelem.saw.slipAngle = view.getInt16(22, true) / 10;
+				debugTelem.saw.intervention = view.getUint8(24) === 1;
+				debugTelem.saw.throttleMult = view.getUint8(25);
+
+				// Steering Shaper (offset 26-30)
+				debugTelem.ss.steeringLimit = view.getUint8(26);
+				debugTelem.ss.rateLimited = view.getUint8(27) === 1;
+				debugTelem.ss.counterSteer = view.getUint8(28) === 1;
+				debugTelem.ss.counterAmount = view.getInt16(29, true);
+
+				// Update debug overlay if visible
+				if (debugOverlayVisible) {
+					updateDebugOverlay();
+				}
+			}
+
+			function updateDebugOverlay() {
+				const tc = debugTelem.tc;
+				const yrc = debugTelem.yrc;
+				const saw = debugTelem.saw;
+				const ss = debugTelem.ss;
+
+				// Calculate final throttle through pipeline (assumes 100% input for visualization)
+				const inputPct = Math.abs(thr) * 100;
+				const afterTc = inputPct * (tc.throttleMult / 100);
+				const afterYrc = afterTc * (yrc.throttleMult / 100);
+				const afterSaw = afterYrc * (saw.throttleMult / 100);
+
+				// Update throttle pipeline bars
+				document.getElementById('pipe-input').style.height = `${inputPct}%`;
+
+				const pipeTc = document.getElementById('pipe-tc');
+				pipeTc.style.height = `${afterTc}%`;
+				pipeTc.className = `pipeline-fill${tc.throttleMult < 100 ? ' cut' : ''}`;
+
+				const pipeYrc = document.getElementById('pipe-yrc');
+				pipeYrc.style.height = `${afterYrc}%`;
+				pipeYrc.className = `pipeline-fill${yrc.throttleMult < 100 ? ' cut' : ''}`;
+
+				const pipeSaw = document.getElementById('pipe-saw');
+				pipeSaw.style.height = `${afterSaw}%`;
+				pipeSaw.className = `pipeline-fill${saw.throttleMult < 100 ? ' cut' : ''}`;
+
+				document.getElementById('pipe-final').style.height = `${afterSaw}%`;
+
+				// Traction Control section
+				const tcDot = document.getElementById('tc-status-dot');
+				if (!tractionMode) {
+					tcDot.className = 'debug-status-dot';
+				} else if (tc.slipDetected) {
+					tcDot.className = 'debug-status-dot critical';
+				} else if (tc.throttleMult < 100) {
+					tcDot.className = 'debug-status-dot active';
+				} else {
+					tcDot.className = 'debug-status-dot idle';
+				}
+
+				const reasonNames = ['none', 'throttle_low', 'accel_mismatch', 'slip_ratio'];
+				document.getElementById('tc-slip').textContent = tc.slipDetected ? 'YES' : 'no';
+				document.getElementById('tc-slip').className = `debug-value${tc.slipDetected ? ' negative' : ''}`;
+				document.getElementById('tc-reason').textContent = reasonNames[tc.slipReason] || '—';
+				document.getElementById('tc-mult').textContent = `${tc.throttleMult}%`;
+				document.getElementById('tc-mult').className = `debug-value${tc.throttleMult < 100 ? ' warning' : ''}`;
+				document.getElementById('tc-wheel-accel').textContent = `${tc.wheelAccel.toFixed(1)} m/s²`;
+				document.getElementById('tc-vehicle-accel').textContent = `${tc.vehicleAccel.toFixed(1)} m/s²`;
+				document.getElementById('tc-slip-ratio').textContent = tc.slipRatio.toFixed(2);
+
+				// Yaw Rate Controller section
+				const yrcDot = document.getElementById('yrc-status-dot');
+				if (!stabilityMode) {
+					yrcDot.className = 'debug-status-dot';
+				} else if (yrc.intervention === 1) {
+					yrcDot.className = 'debug-status-dot critical'; // oversteer
+				} else if (yrc.intervention === 2) {
+					yrcDot.className = 'debug-status-dot active'; // understeer
+				} else if (yrc.throttleMult < 100) {
+					yrcDot.className = 'debug-status-dot active';
+				} else {
+					yrcDot.className = 'debug-status-dot idle';
+				}
+
+				const interventionNames = ['none', 'OVERSTEER', 'understeer'];
+				const intEl = document.getElementById('yrc-intervention');
+				intEl.textContent = interventionNames[yrc.intervention] || '—';
+				intEl.className = `debug-value${yrc.intervention === 1 ? ' negative' : yrc.intervention === 2 ? ' warning' : ''}`;
+
+				document.getElementById('yrc-mult').textContent = `${yrc.throttleMult}%`;
+				document.getElementById('yrc-mult').className = `debug-value${yrc.throttleMult < 100 ? ' warning' : ''}`;
+				document.getElementById('yrc-brake').textContent = yrc.virtualBrake > 0 ? yrc.virtualBrake : '—';
+				document.getElementById('yrc-brake').className = `debug-value${yrc.virtualBrake > 0 ? ' negative' : ''}`;
+
+				document.getElementById('yrc-desired').textContent = `${yrc.yawDesired.toFixed(1)}°/s`;
+				document.getElementById('yrc-actual').textContent = `${yrc.yawActual.toFixed(1)}°/s`;
+				document.getElementById('yrc-error').textContent = `${yrc.yawError.toFixed(1)}°/s`;
+				document.getElementById('yrc-error').className =
+					`debug-value${Math.abs(yrc.yawError) > 35 ? ' negative' : Math.abs(yrc.yawError) > 20 ? ' warning' : ''}`;
+
+				// Update yaw rate bar visualization (range: -100 to +100 deg/s mapped to 0-100%)
+				const yawScale = 100; // +/- 100 deg/s full scale
+				const desiredPos = 50 + (yrc.yawDesired / yawScale) * 50;
+				const actualPos = 50 + (yrc.yawActual / yawScale) * 50;
+				document.getElementById('yaw-desired').style.left = `${Math.max(0, Math.min(100, desiredPos))}%`;
+				document.getElementById('yaw-actual').style.left = `${Math.max(0, Math.min(100, actualPos))}%`;
+
+				// Slip Angle Watchdog section
+				const sawDot = document.getElementById('saw-status-dot');
+				if (!stabilityMode) {
+					sawDot.className = 'debug-status-dot';
+				} else if (saw.intervention) {
+					sawDot.className = 'debug-status-dot critical';
+				} else if (Math.abs(saw.slipAngle) > 25) {
+					sawDot.className = 'debug-status-dot active';
+				} else {
+					sawDot.className = 'debug-status-dot idle';
+				}
+
+				// Update slip angle gauge (0-90° mapped to 0-90° needle rotation)
+				const absSlip = Math.abs(saw.slipAngle);
+				const needleAngle = Math.min(90, absSlip); // Cap at 90°
+				const needleDir = saw.slipAngle >= 0 ? 1 : -1;
+				document.getElementById('slip-needle').style.transform = `rotate(${needleAngle * needleDir}deg)`;
+
+				const angleEl = document.getElementById('saw-angle');
+				angleEl.textContent = `${saw.slipAngle.toFixed(0)}°`;
+				angleEl.className = `slip-gauge-value${absSlip > 35 ? ' negative' : absSlip > 20 ? ' warning' : ''}`;
+
+				document.getElementById('saw-intervention').textContent = saw.intervention ? 'ACTIVE' : 'no';
+				document.getElementById('saw-intervention').className = `debug-value${saw.intervention ? ' negative' : ''}`;
+				document.getElementById('saw-mult').textContent = `${saw.throttleMult}%`;
+				document.getElementById('saw-mult').className = `debug-value${saw.throttleMult < 100 ? ' warning' : ''}`;
+
+				// Steering Shaper section
+				const ssDot = document.getElementById('ss-status-dot');
+				if (!stabilityMode) {
+					ssDot.className = 'debug-status-dot';
+				} else if (ss.counterSteer) {
+					ssDot.className = 'debug-status-dot active';
+				} else if (ss.rateLimited) {
+					ssDot.className = 'debug-status-dot active';
+				} else {
+					ssDot.className = 'debug-status-dot idle';
+				}
+
+				document.getElementById('ss-limit').textContent = `${ss.steeringLimit}%`;
+				document.getElementById('ss-rate').textContent = ss.rateLimited ? 'YES' : 'no';
+				document.getElementById('ss-rate').className = `debug-value${ss.rateLimited ? ' warning' : ''}`;
+				document.getElementById('ss-counter').textContent = ss.counterSteer ? 'ACTIVE' : 'no';
+				document.getElementById('ss-counter').className = `debug-value${ss.counterSteer ? ' positive' : ''}`;
+				document.getElementById('ss-assist').textContent = ss.counterAmount !== 0 ? ss.counterAmount : '—';
+			}
+
+			function toggleDebugOverlay() {
+				debugOverlayVisible = !debugOverlayVisible;
+				const overlay = document.getElementById('debug-overlay');
+				const hint = document.getElementById('debug-hint');
+				if (debugOverlayVisible) {
+					overlay.classList.add('active');
+					hint.style.display = 'none';
+				} else {
+					overlay.classList.remove('active');
+					hint.style.display = 'block';
+				}
+			}
+
 			// Smooth angle transition with wrap-around handling
 			function smoothAngle(current, target, alpha) {
 				const diff = Math.atan2(Math.sin(((target - current) * Math.PI) / 180), Math.cos(((target - current) * Math.PI) / 180));
@@ -2283,6 +2869,10 @@
 							else if (cmd === CMD_TELEM && view.byteLength >= 24) {
 								handleTelemetry(view);
 							}
+							// Handle debug telemetry broadcast (stability systems)
+							else if (cmd === CMD_DEBUG_TELEM && view.byteLength >= 31) {
+								handleDebugTelemetry(view);
+							}
 						}
 					}
 				};
@@ -2567,6 +3157,9 @@
 					e.preventDefault();
 				} else if (e.code === 'KeyR' && !e.repeat) {
 					toggleStability();
+					e.preventDefault();
+				} else if (e.code === 'KeyC' && !e.repeat) {
+					toggleDebugOverlay();
 					e.preventDefault();
 				}
 			});

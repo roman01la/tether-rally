@@ -2,7 +2,7 @@
 
 # Tether Rally - Remote Control RC Car Over the Internet
 
-Control a real RC car from anywhere in the world through your browser. This project enables low-latency remote control (~50-100ms over 4G) with live FPV video streaming, using WebRTC for peer-to-peer communication.
+Control a real RC car from anywhere in the world through your browser. This project enables low-latency remote control (~30-100ms over 4G) with live FPV video streaming, using WebRTC for peer-to-peer communication.
 
 |                         |                         |
 | :---------------------: | :---------------------: |
@@ -14,8 +14,8 @@ Control a real RC car from anywhere in the world through your browser. This proj
 
 ## Features
 
-- **Low-latency control** - ~50-100ms over internet, ~10-15ms on LAN
-- **Live FPV video** - 720p @ 30fps H.264 streaming (~150ms glass-to-glass over 4G)
+- **Low-latency control** - ~30-100ms over internet, ~10-15ms on LAN
+- **Live FPV video** - 720p @ 60fps H.264 streaming (~150ms glass-to-glass over 4G)
 - **Touch & keyboard controls** - Works on mobile and desktop (smooth interpolation)
 - **Turbo mode** - Press E or tap button for extra speed (30% → 65% forward throttle)
 - **Traction control** - Press Q or tap button for automatic slip detection & throttle limiting
@@ -262,13 +262,22 @@ sudo mv mediamtx /usr/local/bin/
 Create `~/mediamtx.yml`:
 
 ```yaml
+writeQueueSize: 64
 paths:
   cam:
     source: rpiCamera
     rpiCameraWidth: 1280
     rpiCameraHeight: 720
-    rpiCameraFPS: 30
+    rpiCameraFPS: 60
     rpiCameraBitrate: 2000000
+    rpiCameraCodec: hardwareH264
+    rpiCameraIDRPeriod: 30
+    rpiCameraHardwareH264Profile: baseline
+    rpiCameraDenoise: "off"
+    rpiCameraEV: 1
+    rpiCameraHDR: false
+    rpiCameraAfMode: manual
+    rpiCameraLensPosition: 0.1
 ```
 
 #### Install Cloudflare Tunnel

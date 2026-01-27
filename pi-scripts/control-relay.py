@@ -74,6 +74,7 @@ CMD_TELEM = 0x07   # Pi -> Clients: telemetry broadcast
 CMD_TURBO = 0x08   # Turbo mode toggle (sent to ESP32)
 CMD_TRACTION = 0x09 # Traction control toggle (browser -> Pi)
 CMD_STABILITY = 0x0A # Stability control toggle (browser -> Pi)
+CMD_DEBUG_TELEM = 0x0B # Pi -> Clients: debug telemetry (stability systems)
 
 # Race sub-commands (sent as payload after CMD_RACE)
 RACE_START_COUNTDOWN = 0x01
@@ -273,6 +274,110 @@ def broadcast_telemetry():
             logger.warning(f"Error sending telemetry: {e}")
 
 
+def broadcast_debug_telemetry():
+    """Broadcast debug telemetry for stability systems (10Hz)"""
+    global data_channels, traction_ctrl, stability_ctrl, slip_watchdog, steering_shaper
+    global traction_enabled, stability_enabled
+    
+    # Get status from each system
+    # Traction Control: slip_detected(1), slip_reason(1), throttle_mult(1), wheel_accel(2), vehicle_accel(2), slip_ratio(2)
+    tc_slip_detected = 0
+    tc_slip_reason = 0  # 0=none, 1=throttle_low, 2=accel_mismatch, 3=slip_ratio
+    tc_throttle_mult = 100  # 0-100 percent
+    tc_wheel_accel = 0  # *10, signed int16
+    tc_vehicle_accel = 0  # *10, signed int16
+    tc_slip_ratio = 0  # *100, signed int16
+    
+    if traction_ctrl and traction_enabled:
+        tc_slip_detected = 1 if traction_ctrl.slip_detected else 0
+        reason = traction_ctrl.slip_reason
+        if "accel_mismatch" in reason:
+            tc_slip_reason = 2
+        elif "slip_ratio" in reason:
+            tc_slip_reason = 3
+        elif "throttle_low" in reason:
+            tc_slip_reason = 1
+        else:
+            tc_slip_reason = 0
+        tc_throttle_mult = int(traction_ctrl.get_throttle_multiplier() * 100)
+        tc_wheel_accel = int(max(-3276.7, min(3276.7, traction_ctrl.wheel_accel)) * 10)
+        tc_vehicle_accel = int(max(-3276.7, min(3276.7, traction_ctrl.vehicle_accel)) * 10)
+        tc_slip_ratio = int(max(-327.67, min(327.67, traction_ctrl.slip_ratio)) * 100)
+    
+    # Yaw Rate Controller: intervention_type(1), throttle_mult(1), virtual_brake(2), yaw_desired(2), yaw_actual(2), yaw_error(2)
+    yrc_intervention = 0  # 0=none, 1=oversteer, 2=understeer
+    yrc_throttle_mult = 100
+    yrc_virtual_brake = 0
+    yrc_yaw_desired = 0  # *10, signed int16
+    yrc_yaw_actual = 0   # *10, signed int16
+    yrc_yaw_error = 0    # *10, signed int16
+    
+    if stability_ctrl and stability_enabled:
+        if stability_ctrl.intervention_type == "oversteer":
+            yrc_intervention = 1
+        elif stability_ctrl.intervention_type == "understeer":
+            yrc_intervention = 2
+        yrc_throttle_mult = int(stability_ctrl.get_throttle_multiplier() * 100)
+        yrc_virtual_brake = stability_ctrl.get_virtual_brake()
+        yrc_yaw_desired = int(max(-3276.7, min(3276.7, stability_ctrl.yaw_rate_desired)) * 10)
+        yrc_yaw_actual = int(max(-3276.7, min(3276.7, stability_ctrl.yaw_rate_actual)) * 10)
+        yrc_yaw_error = int(max(-3276.7, min(3276.7, stability_ctrl.yaw_error)) * 10)
+    
+    # Slip Angle Watchdog: slip_angle(2), intervention_active(1), throttle_mult(1)
+    saw_slip_angle = 0   # *10, signed int16
+    saw_intervention = 0
+    saw_throttle_mult = 100
+    
+    if slip_watchdog and stability_enabled:
+        saw_slip_angle = int(max(-1800, min(1800, slip_watchdog.slip_angle)) * 10)
+        saw_intervention = 1 if slip_watchdog.intervention_active else 0
+        saw_throttle_mult = int(slip_watchdog.get_throttle_multiplier() * 100)
+    
+    # Steering Shaper: steering_limit(1), rate_limited(1), counter_steer_active(1), counter_steer_amount(2)
+    ss_steering_limit = 100  # 0-100 percent
+    ss_rate_limited = 0
+    ss_counter_steer = 0
+    ss_counter_amount = 0  # signed int16
+    
+    if steering_shaper and stability_enabled:
+        ss_steering_limit = int(steering_shaper.steering_limit * 100)
+        ss_rate_limited = 1 if steering_shaper.rate_limited else 0
+        ss_counter_steer = 1 if steering_shaper.counter_steer_active else 0
+        ss_counter_amount = steering_shaper.counter_steer_amount
+    
+    # Pack debug telemetry
+    # Format: seq(2) + cmd(1) + 
+    #   TC: slip_detected(1) + slip_reason(1) + throttle_mult(1) + wheel_accel(2) + vehicle_accel(2) + slip_ratio(2) = 9 bytes
+    #   YRC: intervention(1) + throttle_mult(1) + virtual_brake(2) + yaw_desired(2) + yaw_actual(2) + yaw_error(2) = 10 bytes
+    #   SAW: slip_angle(2) + intervention(1) + throttle_mult(1) = 4 bytes
+    #   SS: steering_limit(1) + rate_limited(1) + counter_steer(1) + counter_amount(2) = 5 bytes
+    # Total: 3 + 9 + 10 + 4 + 5 = 31 bytes
+    
+    message = struct.pack('<HB BBB hhh B B H hhh h BB BB Bh',
+        0, CMD_DEBUG_TELEM,
+        # Traction Control (9 bytes)
+        tc_slip_detected, tc_slip_reason, tc_throttle_mult,
+        tc_wheel_accel, tc_vehicle_accel, tc_slip_ratio,
+        # Yaw Rate Controller (10 bytes)
+        yrc_intervention, yrc_throttle_mult, yrc_virtual_brake,
+        yrc_yaw_desired, yrc_yaw_actual, yrc_yaw_error,
+        # Slip Angle Watchdog (4 bytes)
+        saw_slip_angle,
+        saw_intervention, saw_throttle_mult,
+        # Steering Shaper (5 bytes)
+        ss_steering_limit, ss_rate_limited,
+        ss_counter_steer, ss_counter_amount
+    )
+    
+    # Send to all connected data channels
+    for channel in data_channels[:]:
+        try:
+            if channel.readyState == "open":
+                channel.send(message)
+        except Exception as e:
+            logger.warning(f"Error sending debug telemetry: {e}")
+
+
 async def gps_reader_loop():
     """Read GPS data from serial port in background"""
     global gps_lat, gps_lon, gps_speed, gps_heading, gps_fix
@@ -345,6 +450,7 @@ async def telemetry_broadcast_loop():
     while True:
         if race_state == "racing":
             broadcast_telemetry()
+            broadcast_debug_telemetry()
         await asyncio.sleep(0.1)  # 10Hz
 
 
@@ -632,6 +738,61 @@ def load_turn_credentials():
     except Exception as e:
         logger.warning(f"Could not load TURN credentials: {e}")
 
+# ----- Stability Intervention Logging -----
+
+# Rate-limit logging to avoid spam (log at most every 500ms when active)
+_last_intervention_log = 0
+_intervention_active = False
+
+def log_stability_interventions(orig_throttle, new_throttle, orig_steering, new_steering):
+    """Log stability interventions for tuning. Rate-limited to avoid spam."""
+    global _last_intervention_log, _intervention_active
+    global stability_ctrl, slip_watchdog, steering_shaper, traction_ctrl
+    global fused_speed, imu_yaw_rate, blended_heading, gps_heading
+    
+    now = time.time()
+    throttle_cut = orig_throttle - new_throttle
+    steering_change = new_steering - orig_steering
+    
+    # Check if any system is actively intervening
+    intervening = False
+    reasons = []
+    
+    if stability_ctrl and stability_ctrl.intervention_type != "none":
+        intervening = True
+        reasons.append(f"yaw:{stability_ctrl.intervention_type}(err={stability_ctrl.yaw_error:.0f}°/s)")
+    
+    if slip_watchdog and slip_watchdog.intervention_active:
+        intervening = True
+        reasons.append(f"slip:{slip_watchdog.slip_angle:.0f}°")
+    
+    if traction_ctrl and traction_ctrl.slip_detected:
+        intervening = True
+        reasons.append(f"traction:{traction_ctrl.slip_reason}")
+    
+    if steering_shaper:
+        if steering_shaper.rate_limited:
+            reasons.append("steer:rate")
+        if steering_shaper.counter_steer_active:
+            reasons.append(f"steer:assist({steering_shaper.counter_steer_amount})")
+    
+    # Log when intervention starts, ends, or periodically while active
+    if intervening:
+        if not _intervention_active or (now - _last_intervention_log) > 0.5:
+            reason_str = ", ".join(reasons) if reasons else "unknown"
+            logger.info(
+                f"STABILITY: thr {orig_throttle}→{new_throttle} (-{throttle_cut}), "
+                f"str {orig_steering}→{new_steering}, "
+                f"spd={fused_speed:.1f}km/h, yaw={imu_yaw_rate:.0f}°/s, "
+                f"reason=[{reason_str}]"
+            )
+            _last_intervention_log = now
+        _intervention_active = True
+    elif _intervention_active:
+        # Log when intervention ends
+        logger.info("STABILITY: intervention ended, full control restored")
+        _intervention_active = False
+
 # ----- ESP32 Communication -----
 
 def forward_to_esp32(message: bytes):
@@ -773,6 +934,12 @@ async def handle_offer(request):
                         # Apply slip angle watchdog if enabled (drift/slide recovery)
                         if slip_watchdog and stability_enabled and limited_throttle > 0:
                             limited_throttle = slip_watchdog.apply_to_throttle(limited_throttle)
+                        
+                        # Log interventions for tuning (rate-limited to avoid spam)
+                        log_stability_interventions(
+                            current_throttle, limited_throttle,
+                            current_steering, shaped_steering
+                        )
                         
                         # Repack if throttle or steering was modified
                         if limited_throttle != current_throttle or shaped_steering != current_steering:
@@ -1258,6 +1425,7 @@ async def main():
     
     # Initialize yaw-rate stability control (disabled by default)
     # Wheelbase: ARRMA Big Rock 3S ≈ 320mm
+    global stability_ctrl, slip_watchdog, steering_shaper
     stability_ctrl = YawRateController(wheelbase_m=0.32)
     stability_ctrl.enabled = False  # Must be enabled via admin API
     logger.info("Stability control initialized (disabled by default)")
