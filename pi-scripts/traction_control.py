@@ -72,11 +72,11 @@ class TractionControl:
         
         # Slip detection thresholds
         # At 50% power limit, wheel acceleration is ~half of full power
-        self.WHEEL_ACCEL_THRESHOLD = 10.0  # m/s² - wheel accel above this = potential slip
-                                           # At 50% throttle limit, max ~10-12 m/s²
-        self.VEHICLE_ACCEL_THRESHOLD = 1.5 # m/s² - if vehicle accel below this during wheel accel = slip
-                                           # ~0.15g is reasonable at 50% power on loose surfaces
-        self.MIN_THROTTLE_FOR_SLIP = 400   # Minimum throttle (out of 1000) to consider slip
+        self.WHEEL_ACCEL_THRESHOLD = 3.0   # m/s² - wheel accel above this = potential slip
+                                           # Lowered for testing (was 10.0)
+        self.VEHICLE_ACCEL_THRESHOLD = 1.0 # m/s² - if vehicle accel below this during wheel accel = slip
+                                           # Lowered for testing (was 1.5)
+        self.MIN_THROTTLE_FOR_SLIP = 13000 # Minimum throttle (out of 32767) to consider slip (~40%)
                                            # At 50% limit, need higher threshold for meaningful power
         self.YAW_RATE_THRESHOLD = 90.0     # deg/s - in tight turns/donuts, disable slip detection
                                            # Big Rock can do aggressive turns - let it slide!
@@ -209,8 +209,8 @@ class TractionControl:
         Returns:
             (slip_detected, reason_string)
         """
-        # Only check for slip when accelerating
-        if throttle < self.MIN_THROTTLE_FOR_SLIP:
+        # Only check for slip when accelerating (forward or reverse)
+        if abs(throttle) < self.MIN_THROTTLE_FOR_SLIP:
             return False, "throttle_low"
         
         # Reduce sensitivity in tight turns (yaw rate high)

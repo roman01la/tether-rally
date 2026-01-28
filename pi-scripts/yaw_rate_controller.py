@@ -138,8 +138,8 @@ class YawRateController:
         # Clamp dt
         dt = max(0.001, min(0.1, dt))
 
-        # Invert yaw rate: BNO055 is mounted upside-down (Z axis reversed)
-        yaw_rate = -yaw_rate
+        # Note: yaw_rate is already corrected for upside-down mount in control-relay.py
+        # Positive = CCW (left turn), Negative = CW (right turn)
 
         # Smooth yaw rate
         self._yaw_rate_smooth += self.yaw_rate_smoothing * (yaw_rate - self._yaw_rate_smooth)
@@ -164,7 +164,7 @@ class YawRateController:
 
         Args:
             speed_kmh: Speed in km/h
-            steering: Steering command (-1000 to 1000)
+            steering: Steering command (-32767 to 32767)
 
         Returns:
             Desired yaw rate in deg/s
@@ -173,10 +173,10 @@ class YawRateController:
         v = speed_kmh / 3.6
 
         # Convert steering command to angle
-        # steering: -1000 (full left) to +1000 (full right)
+        # steering: -32767 (full left) to +32767 (full right)
         # For bicycle model, positive steering = right turn = negative yaw rate (clockwise)
         # But we'll keep signs consistent with gyro convention
-        delta_deg = (steering / 1000.0) * self.max_steering_angle_deg
+        delta_deg = (steering / 32767.0) * self.max_steering_angle_deg
         delta_rad = math.radians(delta_deg)
 
         # Bicycle model: r = v / L * tan(delta)

@@ -993,18 +993,19 @@
 			}
 			.slip-gauge-needle {
 				position: absolute;
-				bottom: 0;
+				bottom: 4px;
 				left: 50%;
 				width: 2px;
 				height: 36px;
 				background: #fff;
-				transform-origin: bottom center;
+				transform-origin: top center;
 				transition: transform 0.1s;
 				border-radius: 1px;
+				margin-left: -1px;
 			}
 			.slip-gauge-center {
 				position: absolute;
-				bottom: -4px;
+				top: 0;
 				left: 50%;
 				transform: translateX(-50%);
 				width: 8px;
@@ -1025,17 +1026,6 @@
 				position: absolute;
 				font-size: 7px;
 				color: #666;
-			}
-
-			/* Debug toggle hint */
-			#debug-hint {
-				position: absolute;
-				top: 90px;
-				left: 10px;
-				font-size: 10px;
-				color: rgba(255, 255, 255, 0.3);
-				z-index: 25;
-				pointer-events: none;
 			}
 		</style>
 	</head>
@@ -1156,7 +1146,6 @@
 			</div>
 
 			<!-- Debug Overlay -->
-			<div id="debug-hint">Press D for debug</div>
 			<div id="debug-overlay">
 				<h3>🔧 Stability Debug</h3>
 
@@ -2496,9 +2485,10 @@
 					`debug-value${Math.abs(yrc.yawError) > 35 ? ' negative' : Math.abs(yrc.yawError) > 20 ? ' warning' : ''}`;
 
 				// Update yaw rate bar visualization (range: -100 to +100 deg/s mapped to 0-100%)
+				// Negate so left turn shows indicator moving left
 				const yawScale = 100; // +/- 100 deg/s full scale
-				const desiredPos = 50 + (yrc.yawDesired / yawScale) * 50;
-				const actualPos = 50 + (yrc.yawActual / yawScale) * 50;
+				const desiredPos = 50 - (yrc.yawDesired / yawScale) * 50;
+				const actualPos = 50 - (yrc.yawActual / yawScale) * 50;
 				document.getElementById('yaw-desired').style.left = `${Math.max(0, Math.min(100, desiredPos))}%`;
 				document.getElementById('yaw-actual').style.left = `${Math.max(0, Math.min(100, actualPos))}%`;
 
@@ -2552,13 +2542,10 @@
 			function toggleDebugOverlay() {
 				debugOverlayVisible = !debugOverlayVisible;
 				const overlay = document.getElementById('debug-overlay');
-				const hint = document.getElementById('debug-hint');
 				if (debugOverlayVisible) {
 					overlay.classList.add('active');
-					hint.style.display = 'none';
 				} else {
 					overlay.classList.remove('active');
-					hint.style.display = 'block';
 				}
 			}
 

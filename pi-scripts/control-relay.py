@@ -288,18 +288,18 @@ def broadcast_debug_telemetry():
     tc_vehicle_accel = 0  # *10, signed int16
     tc_slip_ratio = 0  # *100, signed int16
     
-    if traction_ctrl and traction_enabled:
-        tc_slip_detected = 1 if traction_ctrl.slip_detected else 0
-        reason = traction_ctrl.slip_reason
-        if "accel_mismatch" in reason:
-            tc_slip_reason = 2
-        elif "slip_ratio" in reason:
-            tc_slip_reason = 3
-        elif "throttle_low" in reason:
-            tc_slip_reason = 1
-        else:
-            tc_slip_reason = 0
-        tc_throttle_mult = int(traction_ctrl.get_throttle_multiplier() * 100)
+    # Always send sensor data for debugging, even when disabled
+    if traction_ctrl:
+        tc_slip_detected = 1 if (traction_enabled and traction_ctrl.slip_detected) else 0
+        if traction_enabled:
+            reason = traction_ctrl.slip_reason
+            if "accel_mismatch" in reason:
+                tc_slip_reason = 2
+            elif "slip_ratio" in reason:
+                tc_slip_reason = 3
+            elif "throttle_low" in reason:
+                tc_slip_reason = 1
+        tc_throttle_mult = int(traction_ctrl.get_throttle_multiplier() * 100) if traction_enabled else 100
         tc_wheel_accel = int(max(-3276.7, min(3276.7, traction_ctrl.wheel_accel)) * 10)
         tc_vehicle_accel = int(max(-3276.7, min(3276.7, traction_ctrl.vehicle_accel)) * 10)
         tc_slip_ratio = int(max(-327.67, min(327.67, traction_ctrl.slip_ratio)) * 100)
@@ -312,13 +312,14 @@ def broadcast_debug_telemetry():
     yrc_yaw_actual = 0   # *10, signed int16
     yrc_yaw_error = 0    # *10, signed int16
     
-    if stability_ctrl and stability_enabled:
-        if stability_ctrl.intervention_type == "oversteer":
+    # Always send sensor data for debugging, even when disabled
+    if stability_ctrl:
+        if stability_enabled and stability_ctrl.intervention_type == "oversteer":
             yrc_intervention = 1
-        elif stability_ctrl.intervention_type == "understeer":
+        elif stability_enabled and stability_ctrl.intervention_type == "understeer":
             yrc_intervention = 2
-        yrc_throttle_mult = int(stability_ctrl.get_throttle_multiplier() * 100)
-        yrc_virtual_brake = stability_ctrl.get_virtual_brake()
+        yrc_throttle_mult = int(stability_ctrl.get_throttle_multiplier() * 100) if stability_enabled else 100
+        yrc_virtual_brake = stability_ctrl.get_virtual_brake() if stability_enabled else 0
         yrc_yaw_desired = int(max(-3276.7, min(3276.7, stability_ctrl.yaw_rate_desired)) * 10)
         yrc_yaw_actual = int(max(-3276.7, min(3276.7, stability_ctrl.yaw_rate_actual)) * 10)
         yrc_yaw_error = int(max(-3276.7, min(3276.7, stability_ctrl.yaw_error)) * 10)
@@ -328,10 +329,11 @@ def broadcast_debug_telemetry():
     saw_intervention = 0
     saw_throttle_mult = 100
     
-    if slip_watchdog and stability_enabled:
+    # Always send sensor data for debugging, even when disabled
+    if slip_watchdog:
         saw_slip_angle = int(max(-1800, min(1800, slip_watchdog.slip_angle)) * 10)
-        saw_intervention = 1 if slip_watchdog.intervention_active else 0
-        saw_throttle_mult = int(slip_watchdog.get_throttle_multiplier() * 100)
+        saw_intervention = 1 if (stability_enabled and slip_watchdog.intervention_active) else 0
+        saw_throttle_mult = int(slip_watchdog.get_throttle_multiplier() * 100) if stability_enabled else 100
     
     # Steering Shaper: steering_limit(1), rate_limited(1), counter_steer_active(1), counter_steer_amount(2)
     ss_steering_limit = 100  # 0-100 percent
@@ -516,19 +518,22 @@ async def imu_reader_loop():
             
             yaw_rate = bno.read_yaw_rate()
             if yaw_rate is not None:
-                imu_yaw_rate = yaw_rate
+                # BNO055 mounted upside-down, Z axis reversed, so negate
+                # Result: positive = CCW (left turn), negative = CW (right turn)
+                imu_yaw_rate = -yaw_rate
             
             # Read linear acceleration for traction control
             lin_accel = bno.read_linear_acceleration()
             if lin_accel is not None:
-                # BNO055 mounted with Y axis forward on car
-                # lin_accel returns (x, y, z) in m/s²
-                imu_forward_accel = lin_accel[1]  # Y = forward
+                # BNO055 mounted with Y axis forward
+                # Test: no negation, positive = forward acceleration
+                imu_forward_accel = lin_accel[1]
             
             imu_calibration = bno.read_calibration()
             
             # Update traction control (at IMU rate for responsiveness)
-            if traction_ctrl and traction_enabled and imu_valid:
+            # Always update for sensor monitoring, even when disabled
+            if traction_ctrl and imu_valid:
                 traction_ctrl.update(
                     imu_forward_accel=imu_forward_accel,
                     imu_yaw_rate=imu_yaw_rate,
@@ -539,7 +544,8 @@ async def imu_reader_loop():
                 )
             
             # Update yaw-rate stability control (at IMU rate for fast reaction)
-            if stability_ctrl and stability_enabled and imu_valid:
+            # Always update for sensor monitoring, even when disabled
+            if stability_ctrl and imu_valid:
                 stability_ctrl.update(
                     yaw_rate=imu_yaw_rate,
                     speed=fused_speed,

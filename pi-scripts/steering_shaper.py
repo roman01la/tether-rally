@@ -50,13 +50,13 @@ class SteeringShaper:
         
         # === Rate Limiting ===
         
-        # Max steering change per second (in steering units, full range is 2000)
+        # Max steering change per second (in steering units, full range is ~65534)
         # At 50Hz, this is max_rate / 50 per update
-        # 4000/sec = full sweep in 0.5s - responsive but not snappy
-        self.max_steering_rate = 4000  # units/sec (was 3000)
+        # 300000/sec = full sweep in ~0.2s - very responsive
+        self.max_steering_rate = 300000  # units/sec (faster for responsive feel)
         
         # Faster rate limit for returning toward center (feels more natural)
-        self.max_center_rate = 6000    # units/sec (faster return to center)
+        self.max_center_rate = 400000    # units/sec (faster return to center)
         
         # === Counter-Steer Assist ===
         
@@ -71,13 +71,13 @@ class SteeringShaper:
         self.counter_steer_strength = 0.10
         
         # Only assist when input is near neutral (abs < this)
-        self.neutral_threshold = 150  # ~15% of full range (wider neutral zone)
+        self.neutral_threshold = 5000  # ~15% of full int16 range
         
         # Minimum speed for counter-steer assist
         self.counter_steer_min_speed = 10.0  # km/h (raised)
         
         # Max counter-steer assist (prevents over-correction)
-        self.max_counter_steer = 150  # ~15% of full range (reduced)
+        self.max_counter_steer = 5000  # ~15% of full int16 range
         
         # === Smoothing ===
         
@@ -137,8 +137,8 @@ class SteeringShaper:
         steering = self._prev_output + self.output_smoothing * (steering - self._prev_output)
         self._prev_output = steering
         
-        # Clamp and return as int
-        return int(max(-1000, min(1000, steering)))
+        # Clamp and return as int (full int16 range)
+        return int(max(-32767, min(32767, steering)))
 
     def _apply_speed_limit(self, steering: float, speed: float) -> float:
         """
