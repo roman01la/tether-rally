@@ -1,36 +1,46 @@
 #!/usr/bin/env python3
 """
-Slip Angle Watchdog for ARRMA Big Rock 3S
+Slip Watchdog for ARRMA Big Rock 3S (IMU-Based)
 
-Detects when the car is sliding/drifting by comparing:
-- heading_imu: where the car is POINTING (mag/gyro fused)
-- course_gps: where the car is MOVING (GPS track angle)
+Detects when the car is sliding/drifting using pure IMU data:
+- lateral_accel: measured lateral acceleration from accelerometer (m/s²)
+- yaw_rate: rotation rate from gyroscope (deg/s)
+- speed: vehicle speed (km/h)
 
-When these differ significantly for a sustained period, the car is sliding.
-This watchdog gently reduces throttle to help regain grip.
+Slip detection principle:
+    Expected lateral acceleration during a turn: a_lat_expected = v * ω
+    (where v = velocity, ω = yaw rate in rad/s)
+    
+    If actual lateral acceleration significantly exceeds expected,
+    the rear is sliding out (oversteer/drift).
+
+This approach is MORE RELIABLE than GPS-based slip detection because:
+- Works at any speed (no minimum speed threshold for GPS course)
+- No GPS latency or course "hunting" issues
+- Direct measurement of actual vehicle dynamics
+- 50Hz update rate vs GPS's 10Hz
 
 Design Philosophy:
 - "Feel-good stability, not a nanny"
-- Only kicks in when clearly sliding (high slip angle for sustained time)
+- Only kicks in when clearly sliding (high slip for sustained time)
 - Gentle intervention: gradual throttle reduction, not hard cut
 - Fast recovery when grip is regained
-- Disabled at low speeds (GPS course unreliable)
 
 Works alongside YawRateController:
 - YawRateController: fast reaction to rotation errors (10-20ms)
-- SlipAngleWatchdog: catches sustained drift/slide (100-300ms)
+- SlipWatchdog: catches sustained excessive lateral acceleration (100-300ms)
 
 Usage:
     from slip_angle_watchdog import SlipAngleWatchdog
 
     saw = SlipAngleWatchdog()
 
-    # In control loop (10-20Hz is fine, doesn't need IMU rate):
+    # In control loop (20-50Hz for best results):
     saw.update(
-        heading_imu=blended_heading,  # degrees, 0=North
-        course_gps=gps_heading,       # degrees, 0=North (track angle)
-        speed=fused_speed,            # km/h
-        throttle_input=throttle       # -1000 to 1000
+        lateral_accel=imu_lateral_accel,  # m/s² (positive = right)
+        yaw_rate=imu_yaw_rate,            # deg/s (positive = CCW/left)
+        speed=fused_speed,                # km/h
+        throttle_input=throttle           # -1000 to 1000
     )
 
     # Get throttle multiplier
@@ -43,94 +53,127 @@ import math
 
 class SlipAngleWatchdog:
     """
-    Slip angle watchdog for drift/slide detection.
+    IMU-based slip watchdog for drift/slide detection.
     
-    Compares IMU heading (where car points) vs GPS course (where car moves).
-    Large difference = sliding. Sustained sliding = reduce throttle.
+    Compares expected lateral acceleration (from speed × yaw rate)
+    vs actual lateral acceleration from IMU.
+    
+    Large excess lateral acceleration = sliding.
+    Sustained sliding = reduce throttle.
     """
 
     def __init__(self):
         # === Thresholds ===
         
         # Minimum speed (km/h) for watchdog to be active
-        # GPS course is unreliable below this
-        self.min_speed_kmh = 8.0
+        # At very low speeds, lateral accel is noisy and less meaningful
+        self.min_speed_kmh = 5.0
         
-        # Slip angle threshold (degrees) to trigger watchdog
-        # Below this, car is considered "on track"
-        self.slip_angle_threshold = 35.0  # Raised - allow more drift before intervening
+        # Lateral acceleration excess threshold (m/s²) to trigger watchdog
+        # This is how much EXTRA lateral accel beyond expected indicates slip
+        # Typical cornering: 0.3-0.5g (~3-5 m/s²)
+        # Sliding/drifting: lateral accel much higher than turn rate would suggest
+        self.lateral_excess_threshold = 3.0  # m/s² excess triggers detection
         
         # Time (seconds) slip must persist before intervention
         # Prevents reacting to brief transients - longer = more fun
-        self.slip_duration_threshold = 0.25  # 250ms - allow quick slides
+        self.slip_duration_threshold = 0.20  # 200ms - allow quick slides
         
         # Minimum throttle to consider intervention
         # No point cutting throttle if already coasting
-        self.min_throttle_for_intervention = 300  # Raised threshold
+        self.min_throttle_for_intervention = 300
         
         # === Throttle Control ===
         
         # Target throttle multiplier during slip recovery
         # Not zero - we want "grip recovery" not "emergency stop"
-        self.recovery_target = 0.6  # 60% throttle during recovery (more power)
+        self.recovery_target = 0.6  # 60% throttle during recovery
         
-        # How fast to reduce throttle (per update, ~10Hz assumed)
-        # Soft ramp: 0.04/update = 0.4/sec = 400ms to reach target
-        self.reduction_rate = 0.04  # 4% per cycle - smooth ramp
+        # How fast to reduce throttle (per update, ~20Hz assumed)
+        # Soft ramp: 0.05/update = 1.0/sec = 1s to reach target from 100%
+        self.reduction_rate = 0.05
         
         # How fast to recover when slip ends - fast recovery feels better
-        self.recovery_rate = 0.08   # 8% per cycle - quick recovery
+        self.recovery_rate = 0.08
         
         # Minimum multiplier (floor)
-        self.min_multiplier = 0.5   # 50% floor - keep some power
+        self.min_multiplier = 0.5  # 50% floor - keep some power
         
         # === State ===
         
         self._throttle_multiplier = 1.0
-        self._slip_start_time = None  # When slip angle first exceeded threshold
+        self._slip_start_time = None  # When slip first detected
         self._intervention_active = False
         self._prev_time = time.time()
         
-        # Smoothed slip angle (reduces noise)
-        self._slip_angle_smooth = 0.0
+        # Smoothed values (reduces noise)
+        self._lateral_excess_smooth = 0.0
         self.smoothing_alpha = 0.3
         
         # Diagnostics
-        self.slip_angle = 0.0
-        self.slip_duration = 0.0
+        self.lateral_excess = 0.0      # Excess lateral accel (m/s²)
+        self.expected_lateral = 0.0    # Expected lateral accel (m/s²)
+        self.actual_lateral = 0.0      # Actual lateral accel (m/s²)
+        self.slip_detected = False     # Currently detecting slip
+        self.slip_duration = 0.0       # How long slip has been detected
         self.intervention_active = False
+        
+        # Legacy compatibility (slip_angle now represents excess in different units)
+        self.slip_angle = 0.0  # Will store lateral_excess for backward compat
         
         # Enable/disable
         self.enabled = True
 
     def update(self,
-               heading_imu: float,    # degrees, 0=North (where car points)
-               course_gps: float,     # degrees, 0=North (where car moves)
-               speed: float,          # km/h
-               throttle_input: int):  # -1000 to 1000
+               lateral_accel: float,   # m/s² from accelerometer (positive = right)
+               yaw_rate: float,        # deg/s from gyro (positive = CCW/left turn)
+               speed: float,           # km/h
+               throttle_input: int):   # -1000 to 1000
         """
-        Update watchdog state. Call at 10-20Hz.
+        Update watchdog state. Call at 20-50Hz.
         
         Args:
-            heading_imu: IMU/mag fused heading (degrees, 0=North)
-            course_gps: GPS track angle (degrees, 0=North)
+            lateral_accel: Lateral acceleration from IMU (m/s², positive = right)
+            yaw_rate: Yaw rate from gyro (deg/s, positive = left/CCW)
             speed: Vehicle speed (km/h)
             throttle_input: Current throttle command
         """
         now = time.time()
         self._prev_time = now
         
-        # Calculate slip angle (angular difference, handling wrap-around)
-        raw_slip = self._angle_diff(heading_imu, course_gps)
+        # Store actual lateral for diagnostics
+        self.actual_lateral = lateral_accel
         
-        # Smooth the slip angle
-        self._slip_angle_smooth += self.smoothing_alpha * (raw_slip - self._slip_angle_smooth)
-        self.slip_angle = self._slip_angle_smooth
+        # Calculate expected lateral acceleration from circular motion
+        # a_lat = v * ω (where v is in m/s, ω is in rad/s)
+        # Convert units: speed km/h -> m/s, yaw_rate deg/s -> rad/s
+        v_ms = speed / 3.6
+        omega_rad = math.radians(yaw_rate)
+        
+        # Expected lateral acceleration magnitude
+        # Note: Sign convention - turning left (positive yaw) creates rightward lateral accel
+        # So expected lateral has opposite sign to yaw rate
+        self.expected_lateral = abs(v_ms * omega_rad)
+        
+        # Calculate excess: how much more lateral accel than expected
+        # Use absolute values - we care about magnitude of slip, not direction
+        # Excess = |actual| - |expected|
+        raw_excess = abs(lateral_accel) - self.expected_lateral
+        
+        # Smooth the excess value
+        self._lateral_excess_smooth += self.smoothing_alpha * (raw_excess - self._lateral_excess_smooth)
+        self.lateral_excess = self._lateral_excess_smooth
+        
+        # For backward compatibility, store as "slip_angle" (scaled for display)
+        # Convert m/s² excess to pseudo-degrees (rough approximation for UI)
+        self.slip_angle = self.lateral_excess * 10  # ~10 deg per m/s² excess
         
         # Check conditions for intervention
         speed_ok = speed >= self.min_speed_kmh
         throttle_ok = throttle_input >= self.min_throttle_for_intervention
-        slip_high = abs(self.slip_angle) > self.slip_angle_threshold
+        slip_high = self.lateral_excess > self.lateral_excess_threshold
+        
+        self.slip_detected = speed_ok and slip_high
         
         if speed_ok and throttle_ok and slip_high:
             # Slip detected
@@ -149,19 +192,6 @@ class SlipAngleWatchdog:
             self._recover()
         
         self.intervention_active = self._intervention_active
-
-    def _angle_diff(self, a: float, b: float) -> float:
-        """
-        Calculate signed angular difference (a - b), handling wrap-around.
-        Result is in range [-180, 180].
-        """
-        diff = a - b
-        # Normalize to [-180, 180]
-        while diff > 180:
-            diff -= 360
-        while diff < -180:
-            diff += 360
-        return diff
 
     def _apply_intervention(self):
         """Gradually reduce throttle toward recovery target."""
@@ -205,10 +235,15 @@ class SlipAngleWatchdog:
         """Get diagnostic status."""
         return {
             "enabled": self.enabled,
-            "slip_angle": round(self.slip_angle, 1),
+            "lateral_excess": round(self.lateral_excess, 2),
+            "expected_lateral": round(self.expected_lateral, 2),
+            "actual_lateral": round(self.actual_lateral, 2),
+            "slip_detected": self.slip_detected,
             "slip_duration": round(self.slip_duration * 1000),  # ms
             "intervention_active": self.intervention_active,
             "throttle_multiplier": round(self._throttle_multiplier, 2),
+            # Legacy field for backward compatibility
+            "slip_angle": round(self.slip_angle, 1),
         }
 
     def reset(self):
@@ -216,10 +251,14 @@ class SlipAngleWatchdog:
         self._throttle_multiplier = 1.0
         self._slip_start_time = None
         self._intervention_active = False
-        self._slip_angle_smooth = 0.0
-        self.slip_angle = 0.0
+        self._lateral_excess_smooth = 0.0
+        self.lateral_excess = 0.0
+        self.expected_lateral = 0.0
+        self.actual_lateral = 0.0
+        self.slip_detected = False
         self.slip_duration = 0.0
         self.intervention_active = False
+        self.slip_angle = 0.0
 
 
 # === Test / Demo ===
@@ -229,44 +268,58 @@ if __name__ == "__main__":
 
     saw = SlipAngleWatchdog()
 
-    print("Slip Angle Watchdog Simulation")
+    print("IMU-Based Slip Watchdog Simulation")
     print("=" * 60)
 
     # Simulate scenarios
+    # lateral_accel: m/s² (positive = right)
+    # yaw_rate: deg/s (positive = left turn)
+    # speed: km/h
     scenarios = [
-        ("Straight driving, aligned",
-         {"heading": 90.0, "course": 90.0, "speed": 25.0, "throttle": 600}),
-        ("Slight angle (normal cornering)",
-         {"heading": 95.0, "course": 85.0, "speed": 20.0, "throttle": 500}),
-        ("Moderate drift (power slide)",
-         {"heading": 120.0, "course": 85.0, "speed": 22.0, "throttle": 700}),
-        ("Heavy drift (almost sideways)",
-         {"heading": 150.0, "course": 90.0, "speed": 18.0, "throttle": 800}),
-        ("Spin out (going backwards-ish)",
-         {"heading": 270.0, "course": 90.0, "speed": 15.0, "throttle": 500}),
-        ("Low speed (watchdog inactive)",
-         {"heading": 120.0, "course": 80.0, "speed": 5.0, "throttle": 600}),
+        ("Straight driving (no lateral accel)",
+         {"lateral": 0.2, "yaw": 0.0, "speed": 25.0, "throttle": 600}),
+        
+        ("Normal cornering (lateral matches yaw)",
+         # At 20 km/h (5.56 m/s), turning at 30 deg/s (0.52 rad/s)
+         # Expected lateral = 5.56 * 0.52 = 2.9 m/s²
+         {"lateral": 3.0, "yaw": 30.0, "speed": 20.0, "throttle": 500}),
+        
+        ("Power slide (excess lateral accel)",
+         # Same turn rate, but actual lateral is much higher
+         {"lateral": 7.0, "yaw": 30.0, "speed": 20.0, "throttle": 700}),
+        
+        ("Heavy drift (very high excess)",
+         {"lateral": 10.0, "yaw": 25.0, "speed": 18.0, "throttle": 800}),
+        
+        ("Spin out (high lateral, low speed)",
+         {"lateral": 8.0, "yaw": 60.0, "speed": 12.0, "throttle": 500}),
+        
+        ("Low speed (watchdog less sensitive)",
+         {"lateral": 5.0, "yaw": 20.0, "speed": 4.0, "throttle": 600}),
     ]
 
     for name, params in scenarios:
         print(f"\n{name}:")
-        print(f"  Heading: {params['heading']}°, Course: {params['course']}°, "
+        print(f"  Lateral: {params['lateral']:.1f} m/s², Yaw: {params['yaw']:.1f} deg/s, "
               f"Speed: {params['speed']} km/h")
 
         # Run enough iterations to exceed duration threshold
-        for i in range(25):  # ~2.5 seconds at 10Hz
+        for i in range(20):  # ~1 second at 20Hz
             saw.update(
-                heading_imu=params["heading"] + random.uniform(-2, 2),
-                course_gps=params["course"] + random.uniform(-2, 2),
+                lateral_accel=params["lateral"] + random.uniform(-0.3, 0.3),
+                yaw_rate=params["yaw"] + random.uniform(-2, 2),
                 speed=params["speed"],
                 throttle_input=params["throttle"],
             )
-            # Simulate 10Hz
+            # Simulate 20Hz
             import time as t
             t.sleep(0.01)  # Speed up for test
 
         status = saw.get_status()
-        print(f"  Slip angle: {status['slip_angle']:.1f}°")
+        print(f"  Expected lateral: {status['expected_lateral']:.2f} m/s²")
+        print(f"  Actual lateral: {status['actual_lateral']:.2f} m/s²")
+        print(f"  Lateral excess: {status['lateral_excess']:.2f} m/s²")
+        print(f"  Slip detected: {status['slip_detected']}")
         print(f"  Slip duration: {status['slip_duration']}ms")
         print(f"  Intervention: {status['intervention_active']}")
         print(f"  Throttle mult: {status['throttle_multiplier']}")

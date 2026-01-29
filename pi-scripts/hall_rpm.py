@@ -33,12 +33,12 @@ class HallRPM:
     Args:
         gpio_pin: BCM GPIO pin number (default: 22)
         magnets_per_rev: Number of magnets on the wheel (default: 1)
-        timeout: Seconds without pulse before RPM is considered 0 (default: 2.0)
+        timeout: Seconds without pulse before RPM is considered 0 (default: 0.5)
         debounce_ms: Software debounce time in milliseconds (default: 5)
     """
     
     def __init__(self, gpio_pin: int = 22, magnets_per_rev: int = 1, 
-                 timeout: float = 2.0, debounce_ms: int = 5):
+                 timeout: float = 0.5, debounce_ms: int = 5):
         self.gpio_pin = gpio_pin
         self.magnets_per_rev = magnets_per_rev
         self.timeout = timeout

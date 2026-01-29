@@ -1228,11 +1228,11 @@
 					<div class="debug-row"><span class="debug-label">Error</span><span class="debug-value" id="yrc-error">—</span></div>
 				</div>
 
-				<!-- Slip Angle Watchdog -->
+				<!-- Slip Detection (IMU-based) -->
 				<div class="debug-section">
 					<div class="debug-section-title">
 						<div class="debug-status-dot" id="saw-status-dot"></div>
-						Slip Angle
+						Slip Detection
 					</div>
 					<div class="slip-gauge">
 						<div class="slip-gauge-arc">
@@ -1241,8 +1241,8 @@
 							<div class="slip-gauge-center"></div>
 						</div>
 						<div>
-							<div class="slip-gauge-value" id="saw-angle">0°</div>
-							<div class="slip-gauge-label">Heading vs Course</div>
+							<div class="slip-gauge-value" id="saw-angle">0</div>
+							<div class="slip-gauge-label">Lateral Excess (m/s²)</div>
 						</div>
 					</div>
 					<div class="debug-row"><span class="debug-label">Intervention</span><span class="debug-value" id="saw-intervention">—</span></div>
@@ -2506,26 +2506,28 @@
 				document.getElementById('yaw-actual').style.left = `${Math.max(0, Math.min(100, actualPos))}%`;
 
 				// Slip Angle Watchdog section
+				// Note: slipAngle now represents lateral_excess * 10 (so divide by 10 for m/s²)
+				const lateralExcess = saw.slipAngle / 10; // Convert to m/s²
 				const sawDot = document.getElementById('saw-status-dot');
 				if (!stabilityMode) {
 					sawDot.className = 'debug-status-dot';
 				} else if (saw.intervention) {
 					sawDot.className = 'debug-status-dot critical';
-				} else if (Math.abs(saw.slipAngle) > 25) {
+				} else if (Math.abs(lateralExcess) > 2.5) {
 					sawDot.className = 'debug-status-dot active';
 				} else {
 					sawDot.className = 'debug-status-dot idle';
 				}
 
-				// Update slip angle gauge (0-90° mapped to 0-90° needle rotation)
-				const absSlip = Math.abs(saw.slipAngle);
-				const needleAngle = Math.min(90, absSlip); // Cap at 90°
-				const needleDir = saw.slipAngle >= 0 ? 1 : -1;
+				// Update slip gauge (0-6 m/s² mapped to 0-90° needle rotation)
+				const absExcess = Math.abs(lateralExcess);
+				const needleAngle = Math.min(90, absExcess * 15); // 6 m/s² = 90°
+				const needleDir = lateralExcess >= 0 ? 1 : -1;
 				document.getElementById('slip-needle').style.transform = `rotate(${needleAngle * needleDir}deg)`;
 
 				const angleEl = document.getElementById('saw-angle');
-				angleEl.textContent = `${saw.slipAngle.toFixed(0)}°`;
-				angleEl.className = `slip-gauge-value${absSlip > 35 ? ' negative' : absSlip > 20 ? ' warning' : ''}`;
+				angleEl.textContent = `${lateralExcess.toFixed(1)}`;
+				angleEl.className = `slip-gauge-value${absExcess > 3.0 ? ' negative' : absExcess > 2.0 ? ' warning' : ''}`;
 
 				document.getElementById('saw-intervention').textContent = saw.intervention ? 'ACTIVE' : 'no';
 				document.getElementById('saw-intervention').className = `debug-value${saw.intervention ? ' negative' : ''}`;

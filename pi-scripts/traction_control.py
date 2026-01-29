@@ -16,11 +16,12 @@ Design Philosophy:
 - Gentle throttle reduction (max 35% cut), fast recovery
 - Disable in tight turns to allow donuts/drifts
 
-Uses IMU acceleration + wheel RPM for fast slip detection,
-with GPS as slow "ground truth" for drift correction.
+Slip Detection (IMU-primary, no GPS real-time dependency):
+1. PRIMARY: Acceleration mismatch - wheel accelerates but vehicle doesn't
+2. SECONDARY: Sustained speed divergence - wheel speed diverges from IMU-estimated ground speed
 
-Slip detection based on acceleration mismatch:
-- Wheel accelerates fast but vehicle doesn't = wheelspin
+NOTE: GPS is NOT used for real-time slip detection due to 300-500ms latency.
+Ground speed is estimated from IMU forward acceleration integration.
 
 Control action: soft throttle reduction with gradual recovery.
 
@@ -34,7 +35,7 @@ Usage:
         imu_forward_accel=accel_x,  # m/s² (positive = forward)
         imu_yaw_rate=yaw_rate,      # deg/s
         wheel_speed=wheel_kmh,       # km/h from hall sensor
-        gps_speed=gps_kmh,           # km/h from GPS
+        gps_speed=gps_kmh,           # km/h from GPS (for slow drift correction only)
         gps_valid=has_fix,
         throttle_input=throttle      # -1000 to 1000
     )
@@ -53,10 +54,13 @@ class TractionControl:
     
     Tuned for fun bashing while preventing uncontrollable wheelspin.
     
-    Architecture:
-    1. Ground speed estimator: complementary filter (IMU short-term, GPS long-term)
-    2. Slip detection: wheel accel vs vehicle accel mismatch (high thresholds for MT)
+    Architecture (IMU-primary, GPS-free real-time):
+    1. Ground speed estimator: IMU forward accel integration (no GPS latency)
+    2. Slip detection: acceleration mismatch (primary) + speed divergence (secondary)
     3. Control: gentle throttle limiting (max 35% cut) with fast recovery
+    
+    GPS is only used for very slow drift correction of the ground speed estimate,
+    not for real-time slip detection.
     """
     
     def __init__(self):
@@ -65,32 +69,25 @@ class TractionControl:
         # NOTE: Speed is hard-limited to 50% for safety (~25 mph max)
         # Goal: Prevent uncontrollable wheelspin while keeping driving FUN
         
-        # Ground speed estimator
-        self.GPS_BLEND_ALPHA = 0.02        # How fast to blend toward GPS (per update at 50Hz)
-        self.GPS_MIN_SPEED = 2.0           # m/s - below this, don't trust GPS speed
-        self.GPS_MIN_SPEED_KMH = 7.0       # km/h equivalent
+        # Ground speed estimator (IMU-based, GPS for slow drift correction only)
+        self.GPS_DRIFT_CORRECTION_ALPHA = 0.01  # Very slow GPS correction (1% per update)
+        self.GPS_DRIFT_CORRECTION_MIN_SPEED = 5.0  # m/s - only correct above this
         
         # Slip detection thresholds
         # At 50% power limit, wheel acceleration is ~half of full power
         self.WHEEL_ACCEL_THRESHOLD = 3.0   # m/s² - wheel accel above this = potential slip
-                                           # Lowered for testing (was 10.0)
         self.VEHICLE_ACCEL_THRESHOLD = 1.0 # m/s² - if vehicle accel below this during wheel accel = slip
-                                           # Lowered for testing (was 1.5)
         self.MIN_THROTTLE_FOR_SLIP = 13000 # Minimum throttle (out of 32767) to consider slip (~40%)
-                                           # At 50% limit, need higher threshold for meaningful power
         self.YAW_RATE_THRESHOLD = 90.0     # deg/s - in tight turns/donuts, disable slip detection
-                                           # Big Rock can do aggressive turns - let it slide!
         
-        # Slip ratio (classic method, used as confirmation at higher speeds)
-        self.SLIP_RATIO_THRESHOLD = 0.5    # 50% slip ratio triggers
-                                           # Monster trucks with aggressive treads slip more naturally
-        self.SLIP_RATIO_MIN_SPEED = 12.0   # km/h - only use slip ratio above this speed
-                                           # Lower than full power since max speed is ~40 km/h
+        # Speed divergence detection (secondary method, replaces GPS slip ratio)
+        # If wheel speed exceeds estimated ground speed significantly = slip
+        self.SPEED_DIVERGENCE_THRESHOLD = 0.4  # 40% divergence triggers
+        self.SPEED_DIVERGENCE_MIN_SPEED = 3.0  # m/s - only use above this speed
         
         # Throttle control - GENTLE intervention to keep it fun
         self.THROTTLE_CUT_RATE = 0.08      # How much to cut per slip detection (8% per cycle)
         self.THROTTLE_MIN_MULTIPLIER = 0.70 # Never cut below 70% - at 50% limit, this = 35% total
-                                            # Still enough power to maintain control
         self.THROTTLE_RECOVERY_RATE = 0.006 # Recovery per update (~0.3/s at 50Hz)
         self.THROTTLE_FAST_RECOVERY_RATE = 0.02 # Faster recovery when clearly no slip
         
@@ -182,29 +179,40 @@ class TractionControl:
     def _update_ground_speed_estimate(self, imu_accel: float, gps_speed_ms: float, 
                                        gps_valid: bool, dt: float):
         """
-        Complementary filter for ground speed:
-        - Short-term: integrate IMU acceleration
-        - Long-term: blend toward GPS
+        IMU-primary ground speed estimation.
+        
+        Uses IMU forward acceleration integration as primary source.
+        GPS is used only for very slow drift correction (not real-time).
+        This avoids GPS latency affecting slip detection.
         """
-        # Integrate IMU acceleration (short-term, fast response)
+        # Integrate IMU acceleration (primary, fast response)
         self.estimated_ground_speed += imu_accel * dt
         
         # Prevent negative speed (we don't track reverse well)
         self.estimated_ground_speed = max(0, self.estimated_ground_speed)
         
-        # Blend toward GPS when valid and fast enough
-        if gps_valid and gps_speed_ms > self.GPS_MIN_SPEED:
-            # Slow blend toward GPS (prevents drift)
-            self.estimated_ground_speed += self.GPS_BLEND_ALPHA * (gps_speed_ms - self.estimated_ground_speed)
+        # Very slow GPS drift correction (only when GPS is reliable)
+        # This prevents long-term drift without introducing GPS latency
+        if gps_valid and gps_speed_ms > self.GPS_DRIFT_CORRECTION_MIN_SPEED:
+            # 1% correction per cycle - very slow, won't affect real-time response
+            drift_error = gps_speed_ms - self.estimated_ground_speed
+            self.estimated_ground_speed += self.GPS_DRIFT_CORRECTION_ALPHA * drift_error
         
-        # Also use wheel speed as sanity check at low speeds
-        # (wheel can't go much faster than ground when not slipping)
-        # This helps when GPS is unavailable
+        # Sanity check: ground speed can't be way higher than wheel speed
+        # (unless coasting in neutral with wheels not spinning)
+        # This helps reset after wheelspin events
+        if self._prev_wheel_speed > 1.0:  # Wheel is turning
+            max_reasonable = self._prev_wheel_speed * 1.1  # Allow 10% margin
+            self.estimated_ground_speed = min(self.estimated_ground_speed, max_reasonable)
     
     def _detect_slip(self, wheel_speed_ms: float, gps_speed_ms: float, gps_valid: bool,
                      yaw_rate_abs: float, throttle: int) -> tuple[bool, str]:
         """
-        Detect wheel slip using multiple methods.
+        Detect wheel slip using IMU-based methods (no GPS real-time dependency).
+        
+        Methods:
+        1. PRIMARY: Acceleration mismatch - wheel accelerates but vehicle doesn't
+        2. SECONDARY: Speed divergence - wheel speed >> IMU-estimated ground speed
         
         Returns:
             (slip_detected, reason_string)
@@ -224,19 +232,21 @@ class TractionControl:
         if wheel_accel_high and vehicle_accel_low and not in_turn:
             return True, f"accel_mismatch(w={self._wheel_accel_smooth:.1f},v={self._vehicle_accel_smooth:.1f})"
         
-        # === Method 2: Slip ratio (secondary, for higher speeds) ===
-        # Only use when GPS is reliable
-        if gps_valid and gps_speed_ms > (self.SLIP_RATIO_MIN_SPEED / 3.6):
-            # Classic slip ratio: (wheel - ground) / ground
-            ground_speed = max(self.estimated_ground_speed, gps_speed_ms * 0.8)  # Use higher estimate
-            if ground_speed > 0.5:  # Avoid division issues
-                self.slip_ratio = (wheel_speed_ms - ground_speed) / ground_speed
-                
-                # Higher threshold in turns
-                threshold = self.SLIP_RATIO_THRESHOLD * (1.5 if in_turn else 1.0)
-                
-                if self.slip_ratio > threshold:
-                    return True, f"slip_ratio({self.slip_ratio:.2f}>{threshold:.2f})"
+        # === Method 2: Speed divergence (secondary, IMU-based) ===
+        # If wheel speed significantly exceeds IMU-estimated ground speed = slip
+        # This replaces the old GPS-based slip ratio method
+        if self.estimated_ground_speed > self.SPEED_DIVERGENCE_MIN_SPEED:
+            # Calculate divergence: (wheel - ground) / ground
+            divergence = (wheel_speed_ms - self.estimated_ground_speed) / self.estimated_ground_speed
+            self.slip_ratio = divergence  # Store for diagnostics (reusing field name)
+            
+            # Higher threshold in turns (allow more slip)
+            threshold = self.SPEED_DIVERGENCE_THRESHOLD * (1.5 if in_turn else 1.0)
+            
+            if divergence > threshold:
+                return True, f"speed_divergence({divergence:.2f}>{threshold:.2f})"
+        else:
+            self.slip_ratio = 0.0
         
         return False, "none"
     

@@ -116,6 +116,7 @@ gps_task = None     # Asyncio task for GPS reading
 imu_heading = 0.0        # BNO055 fused heading (degrees, 0=North)
 imu_yaw_rate = 0.0       # Gyro Z rotation rate (deg/sec)
 imu_forward_accel = 0.0  # Linear acceleration forward (m/s², gravity-free)
+imu_lateral_accel = 0.0  # Linear acceleration lateral (m/s², positive = right)
 imu_calibration = {'sys': 0, 'gyr': 0, 'acc': 0, 'mag': 0}
 imu_valid = False        # BNO055 connected and reading
 blended_heading = 0.0    # Final heading (blended IMU + GPS)
@@ -154,10 +155,20 @@ fused_speed = 0.0            # Final fused speed (km/h)
 wheel_distance = 0.0         # Total distance from wheel (meters)
 race_start_pulse_count = 0   # Pulse count at race start (for distance reset)
 
-# Speed fusion parameters
-SPEED_FUSION_ALPHA = 0.3     # How quickly to blend toward GPS (0.1=slow, 0.5=fast)
-SPEED_GPS_TRUST_MIN = 3.0    # km/h - below this, trust wheel more
-SPEED_GPS_TRUST_MAX = 10.0   # km/h - above this, trust GPS more
+# Speed fusion parameters (improved: IMU-primary, GPS for drift correction only)
+SPEED_FUSION_ALPHA = 0.15    # Smoothing for speed transitions (lower = smoother)
+IMU_SPEED_INTEGRATE_RATE = 0.8  # How much to trust IMU integration per cycle
+GPS_DRIFT_CORRECTION_ALPHA = 0.05  # Very slow GPS drift correction (5% per cycle)
+GPS_DRIFT_CORRECTION_MIN_SPEED = 5.0  # km/h - only correct above this speed
+WHEELSPIN_DETECT_RATIO = 1.5  # If wheel > GPS * this ratio for sustained time = wheelspin
+WHEELSPIN_DETECT_TIME = 0.3   # Seconds of sustained mismatch to detect wheelspin
+WHEELSPIN_MAX_FUSED_RATIO = 1.2  # Cap fused speed to GPS * this during suspected wheelspin
+
+# Speed fusion state
+imu_integrated_speed = 0.0   # Speed from IMU forward accel integration (km/h)
+last_speed_fusion_time = 0.0
+wheelspin_start_time = 0.0   # When wheelspin was first suspected
+wheelspin_active = False     # Currently detecting wheelspin
 
 # IMU mount offset (degrees to ADD to raw IMU heading to align with car forward)
 # If car points 291° but IMU reads 282°, offset = 291 - 282 = +9
@@ -216,7 +227,7 @@ def broadcast_telemetry():
     """Broadcast telemetry to all connected data channels"""
     global data_channels, race_state, race_start_time, current_throttle, current_steering
     global gps_lat, gps_lon, gps_speed, gps_heading, gps_fix
-    global imu_heading, imu_calibration, imu_yaw_rate, blended_heading
+    global imu_heading, imu_calibration, imu_yaw_rate, imu_lateral_accel, blended_heading
     global fused_speed
     global slip_watchdog, stability_enabled
     
@@ -226,11 +237,12 @@ def broadcast_telemetry():
     # Fuse GPS + wheel speed
     fuse_speed()
     
-    # Update slip angle watchdog (10Hz is fine for this)
+    # Update slip watchdog (uses IMU lateral accel + yaw rate, no GPS dependency)
+    # Now runs at telemetry rate (10Hz), but could be moved to IMU loop for faster response
     if slip_watchdog and stability_enabled:
         slip_watchdog.update(
-            heading_imu=blended_heading,
-            course_gps=gps_heading,
+            lateral_accel=imu_lateral_accel,
+            yaw_rate=imu_yaw_rate,
             speed=fused_speed,
             throttle_input=current_throttle
         )
@@ -492,7 +504,7 @@ def save_imu_calibration(data: bytes):
 
 async def imu_reader_loop():
     """Read BNO055 heading and acceleration at 20Hz"""
-    global imu_heading, imu_yaw_rate, imu_forward_accel, imu_calibration, imu_valid
+    global imu_heading, imu_yaw_rate, imu_forward_accel, imu_lateral_accel, imu_calibration, imu_valid
     global traction_ctrl, traction_enabled
     global stability_ctrl, stability_enabled
     
@@ -528,12 +540,15 @@ async def imu_reader_loop():
                 # Result: positive = CCW (left turn), negative = CW (right turn)
                 imu_yaw_rate = -yaw_rate
             
-            # Read linear acceleration for traction control
+            # Read linear acceleration for traction control and slip detection
             lin_accel = bno.read_linear_acceleration()
             if lin_accel is not None:
-                # BNO055 mounted with Y axis forward
-                # Test: no negation, positive = forward acceleration
+                # BNO055 mounted with Y axis forward, X axis right
+                # Y axis: positive = forward acceleration
+                # X axis: positive = rightward acceleration (lateral)
+                # Note: BNO055 is upside-down, so X axis is negated
                 imu_forward_accel = lin_accel[1]
+                imu_lateral_accel = -lin_accel[0]  # Negate for upside-down mount
             
             imu_calibration = bno.read_calibration()
             
@@ -653,48 +668,89 @@ def update_wheel_speed():
 
 def fuse_speed():
     """
-    Fuse GPS speed with wheel RPM speed.
+    Improved speed fusion: IMU-primary with GPS drift correction.
     
-    Strategy:
-    - Wheel speed: instant response, good for acceleration/braking detection
-    - GPS speed: stable absolute value, but ~500ms latency
+    Strategy (Priority 2 & 3):
+    1. Primary: Wheel speed (real-time, no latency)
+    2. Short-term dynamics: IMU forward acceleration integration
+    3. Long-term drift correction: GPS (only for slow correction, not real-time)
+    4. Wheelspin detection: Cap speed if wheel >> GPS for sustained period
     
-    At low speed: trust wheel more (GPS is noisy/inaccurate)
-    At high speed: blend toward GPS (more stable, wheel may slip)
-    Use wheel for quick changes, GPS to correct drift over time.
+    This avoids GPS latency issues while maintaining accuracy over time.
     """
     global fused_speed, wheel_speed, gps_speed, gps_fix
+    global imu_integrated_speed, last_speed_fusion_time
+    global wheelspin_start_time, wheelspin_active
+    global imu_forward_accel
+    
+    now = time.time()
+    dt = now - last_speed_fusion_time if last_speed_fusion_time > 0 else 0.02
+    dt = max(0.001, min(0.1, dt))  # Clamp dt
+    last_speed_fusion_time = now
     
     # Update wheel speed from sensor
     update_wheel_speed()
     
-    # If no GPS fix, use wheel speed only
-    if not gps_fix:
-        fused_speed = wheel_speed
-        return
+    # === Step 1: Integrate IMU forward acceleration ===
+    # This gives us fast response to acceleration/braking
+    # Convert m/s² to km/h change: (m/s² * dt) * 3.6 = km/h
+    accel_delta_kmh = imu_forward_accel * dt * 3.6
+    imu_integrated_speed += accel_delta_kmh
+    imu_integrated_speed = max(0, imu_integrated_speed)  # Can't go negative
     
-    # If wheel isn't turning (no pulses), trust GPS
-    if wheel_speed < 0.5:
-        fused_speed = gps_speed
-        return
-    
-    # Calculate trust factor for GPS based on speed
-    # Low speed: trust wheel more (GPS noisy)
-    # High speed: trust GPS more (stable)
-    if gps_speed < SPEED_GPS_TRUST_MIN:
-        gps_trust = 0.2  # 20% GPS, 80% wheel
-    elif gps_speed > SPEED_GPS_TRUST_MAX:
-        gps_trust = 0.7  # 70% GPS, 30% wheel
+    # === Step 2: Blend IMU integration with wheel speed ===
+    # Wheel speed is our primary source (real-time)
+    # IMU integration helps during rapid changes
+    if wheel_speed > 0.5:
+        # Wheel is turning - use wheel as primary, IMU for smoothing
+        # This helps when wheel has momentary dropouts
+        primary_speed = wheel_speed * 0.7 + imu_integrated_speed * 0.3
     else:
-        # Linear interpolation
-        t = (gps_speed - SPEED_GPS_TRUST_MIN) / (SPEED_GPS_TRUST_MAX - SPEED_GPS_TRUST_MIN)
-        gps_trust = 0.2 + t * 0.5  # 0.2 to 0.7
+        # Wheel stopped or very slow - trust IMU integration
+        # (handles coasting with wheel not turning due to sensor issues)
+        primary_speed = imu_integrated_speed
     
-    # Blend toward target
-    target = gps_trust * gps_speed + (1 - gps_trust) * wheel_speed
+    # === Step 3: Wheelspin detection (Priority 3) ===
+    # If wheel speed >> GPS speed for sustained period, likely wheelspin
+    if gps_fix and gps_speed > GPS_DRIFT_CORRECTION_MIN_SPEED:
+        wheel_to_gps_ratio = wheel_speed / max(gps_speed, 0.1)
+        
+        if wheel_to_gps_ratio > WHEELSPIN_DETECT_RATIO:
+            # Possible wheelspin
+            if not wheelspin_active:
+                if wheelspin_start_time == 0:
+                    wheelspin_start_time = now
+                elif now - wheelspin_start_time > WHEELSPIN_DETECT_TIME:
+                    wheelspin_active = True
+        else:
+            # No wheelspin signature
+            wheelspin_start_time = 0
+            wheelspin_active = False
+    else:
+        # GPS not reliable enough for wheelspin detection
+        wheelspin_start_time = 0
+        wheelspin_active = False
     
-    # Smooth the transition
-    fused_speed = fused_speed + SPEED_FUSION_ALPHA * (target - fused_speed)
+    # Cap speed during suspected wheelspin
+    if wheelspin_active and gps_fix:
+        max_reasonable_speed = gps_speed * WHEELSPIN_MAX_FUSED_RATIO
+        primary_speed = min(primary_speed, max_reasonable_speed)
+    
+    # === Step 4: GPS drift correction (slow, long-term only) ===
+    # GPS is used ONLY for slow drift correction, not real-time tracking
+    # This prevents GPS latency from affecting control systems
+    if gps_fix and gps_speed > GPS_DRIFT_CORRECTION_MIN_SPEED:
+        # Very slowly blend toward GPS to prevent long-term drift
+        # This is 5% per cycle at 10Hz = ~0.5% per second correction
+        drift_error = gps_speed - primary_speed
+        primary_speed += GPS_DRIFT_CORRECTION_ALPHA * drift_error
+        
+        # Also slowly correct IMU integrated speed to prevent runaway
+        imu_integrated_speed += GPS_DRIFT_CORRECTION_ALPHA * drift_error
+    
+    # === Step 5: Smooth final output ===
+    fused_speed = fused_speed + SPEED_FUSION_ALPHA * (primary_speed - fused_speed)
+    fused_speed = max(0, fused_speed)
 
 # ----- Token Validation -----
 
@@ -1195,6 +1251,7 @@ async def handle_health(request):
                 "blended_heading": round(blended_heading, 1),
                 "yaw_rate": round(imu_yaw_rate, 1),
                 "forward_accel": round(imu_forward_accel, 2),
+                "lateral_accel": round(imu_lateral_accel, 2),
                 "calibration": imu_calibration
             },
             "traction_control": tc_status
