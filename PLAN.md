@@ -20,6 +20,11 @@ A web-based platform where users can remotely control a real RC car over the int
    - Keyboard controls (WASD / Arrow keys) with smooth interpolation
    - **Turbo mode** (E key or button): Normal 30% fwd / 30% back → Turbo 65% fwd / 30% back
    - **Traction control** (Q key or button): IMU + wheel RPM slip detection with automatic throttle limiting
+   - **Stability control** (R key or button): Yaw-rate based ESC for oversteer/understeer intervention
+   - **Slip angle watchdog**: Monitors heading vs course, intervenes on sustained drift (>35°)
+   - **Steering shaper**: Speed-based limits, rate limiting, counter-steer assist for latency compensation
+   - **Debug overlay** (C key): Real-time stability telemetry (throttle pipeline, yaw comparison, slip gauge)
+   - **Headlight control** (H key): GPIO 26 MOSFET control for headlights (IRLZ44N)
    - Safety limits enforced on ESP32 (browser sends raw values, ESP32 clamps)
    - Latency measurement with EMA smoothing
    - **Auto-reconnect on connection loss** with exponential backoff
@@ -27,12 +32,14 @@ A web-based platform where users can remotely control a real RC car over the int
    - **FPV auto-reconnect** when video stream drops
    - **GPS telemetry** (position, speed, heading) broadcast at 10Hz
    - **IMU compass (BNO055)** for stable heading at low speed/stopped
+   - **IMU roll/pitch** for artificial horizon display
    - **IMU linear acceleration** for traction control slip detection
    - **Heading blending** (IMU when slow, GPS course when moving)
    - **Hall effect wheel sensor** (GPIO 22) for RPM and distance tracking
    - **Speed fusion** (GPS + wheel RPM complementary filter)
    - **Wheel distance tracking** (more accurate than GPS for short distances)
    - **Compass HUD** (video game style horizontal strip)
+   - **Artificial horizon** indicator based on IMU roll/pitch
    - **Map arrow** rotates to show car direction
 
 2. **Geofencing** 🔲 (Planned)
@@ -141,6 +148,9 @@ arrma-remote/
 │   ├── bno055_reader.py    # BNO055 IMU driver (heading, yaw rate, linear accel)
 │   ├── hall_rpm.py         # Hall sensor RPM reader for wheel speed
 │   ├── traction_control.py # Traction control system (slip detection + throttle limiting)
+│   ├── yaw_rate_controller.py # Yaw-rate stability control (ESC) for oversteer/understeer
+│   ├── slip_angle_watchdog.py # Slip angle monitoring (heading vs course)
+│   ├── steering_shaper.py  # Latency-aware steering (speed limits, rate limiting, counter-steer)
 │   ├── control-relay.service # systemd service for relay
 │   ├── deploy.sh           # Quick deploy script to Pi
 │   ├── .env                 # Pi secrets (gitignored, on Pi only)
@@ -167,18 +177,21 @@ All secrets are externalized for open-source compatibility:
 
 ### Binary Protocol
 
-| Command  | Byte | Payload                                                                                                                                                         | Description                                                |
-| -------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| PING     | 0x00 | seq(2) + timestamp(4)                                                                                                                                           | Latency measurement                                        |
-| CTRL     | 0x01 | seq(2) + throttle(2) + steering(2)                                                                                                                              | Control values (-32767 to 32767)                           |
-| PONG     | 0x02 | timestamp(4)                                                                                                                                                    | Response to PING (from ESP32)                              |
-| RACE     | 0x03 | sub-cmd(1)                                                                                                                                                      | Race commands (START=0x01, STOP=0x02, RESUME=0x03)         |
-| STATUS   | 0x04 | sub-cmd(1) + value(1)                                                                                                                                           | Browser→Pi: VIDEO=0x01, READY=0x02                         |
-| CONFIG   | 0x05 | reserved(1) + turbo(1) + traction(1)                                                                                                                            | Pi→Browser: turbo mode + traction control state            |
-| KICK     | 0x06 | -                                                                                                                                                               | Pi→Browser: you have been kicked                           |
-| TELEM    | 0x07 | race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + gps_heading(2) + fix(1) + imu_heading(2) + calibration(1) + yaw_rate(2) + wheel_dist(4) | Pi→Clients: telemetry + GPS + IMU + wheel (10Hz, 33 bytes) |
-| TURBO    | 0x08 | turbo(1)                                                                                                                                                        | Browser→Pi→ESP32: turbo mode toggle (0=off, 1=on)          |
-| TRACTION | 0x09 | traction(1)                                                                                                                                                     | Browser→Pi: traction control toggle (0=off, 1=on)          |
+| Command     | Byte | Payload                                                                                                                                                                              | Description                                                        |
+| ----------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| PING        | 0x00 | seq(2) + timestamp(4)                                                                                                                                                                | Latency measurement                                                |
+| CTRL        | 0x01 | seq(2) + throttle(2) + steering(2)                                                                                                                                                   | Control values (-32767 to 32767)                                   |
+| PONG        | 0x02 | timestamp(4)                                                                                                                                                                         | Response to PING (from ESP32)                                      |
+| RACE        | 0x03 | sub-cmd(1)                                                                                                                                                                           | Race commands (START=0x01, STOP=0x02, RESUME=0x03)                 |
+| STATUS      | 0x04 | sub-cmd(1) + value(1)                                                                                                                                                                | Browser→Pi: VIDEO=0x01, READY=0x02                                 |
+| CONFIG      | 0x05 | reserved(1) + turbo(1) + traction(1) + stability(1)                                                                                                                                  | Pi→Browser: turbo + traction + stability state                     |
+| KICK        | 0x06 | -                                                                                                                                                                                    | Pi→Browser: you have been kicked                                   |
+| TELEM       | 0x07 | race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + gps_heading(2) + fix(1) + imu_heading(2) + calibration(1) + yaw_rate(2) + wheel_dist(4) + roll(2) + pitch(2) | Pi→Clients: telemetry + GPS + IMU + wheel (10Hz, 37 bytes)         |
+| TURBO       | 0x08 | turbo(1)                                                                                                                                                                             | Browser→Pi→ESP32: turbo mode toggle (0=off, 1=on)                  |
+| TRACTION    | 0x09 | traction(1)                                                                                                                                                                          | Browser→Pi: traction control toggle (0=off, 1=on)                  |
+| STABILITY   | 0x0A | stability(1)                                                                                                                                                                         | Browser→Pi: stability control toggle (0=off, 1=on)                 |
+| DEBUG_TELEM | 0x0B | TC(9) + YRC(10) + SAW(4) + SS(5)                                                                                                                                                     | Pi→Browser: debug telemetry for stability systems (10Hz, 31 bytes) |
+| HEADLIGHT   | 0x0C | headlight(1)                                                                                                                                                                         | Browser→Pi: headlight toggle via GPIO 26 (0=off, 1=on)             |
 
 Packet format: `seq(uint16 LE) + cmd(uint8) + payload`
 
