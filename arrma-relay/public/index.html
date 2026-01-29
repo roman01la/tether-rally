@@ -1136,7 +1136,7 @@
 				<div id="steering-thumb" class="slider-thumb"></div>
 			</div>
 
-			<div id="instructions">WASD / Arrow keys | E = Turbo | Q = Traction | R = Stability | C = Debug</div>
+			<div id="instructions">WASD / Arrow keys | E = Turbo | Q = Traction | R = Stability | H = Headlight | C = Debug</div>
 
 			<!-- Control Buttons -->
 			<div id="control-buttons-container">
@@ -1317,6 +1317,7 @@
 			const CMD_TRACTION = 0x09; // Browser -> Pi: traction control toggle
 			const CMD_STABILITY = 0x0a; // Browser -> Pi: stability control toggle
 			const CMD_DEBUG_TELEM = 0x0b; // Pi -> Browser: debug telemetry (stability systems)
+			const CMD_HEADLIGHT = 0x0c; // Browser -> Pi: headlight toggle
 
 			// Race sub-commands
 			const RACE_START_COUNTDOWN = 0x01;
@@ -1383,6 +1384,7 @@
 			let turboMode = false; // Turbo mode state
 			let tractionMode = false; // Traction control state
 			let stabilityMode = false; // Stability (yaw-rate) control state
+			let headlightMode = false; // Headlight state
 			let debugOverlayVisible = false; // Debug overlay visibility
 			const keyStep = 1.0;
 			const strStep = 1.0;
@@ -2312,6 +2314,17 @@
 				updateStabilityIndicator();
 			}
 
+			function toggleHeadlight() {
+				if (!isConnected) return;
+				headlightMode = !headlightMode;
+				if (controlChannel && controlChannel.readyState === 'open') {
+					const { buf, view } = createPacket(CMD_HEADLIGHT, 1);
+					view.setUint8(3, headlightMode ? 1 : 0);
+					controlChannel.send(buf);
+					console.log('Sent headlight:', headlightMode);
+				}
+			}
+
 			function handleKicked() {
 				console.log('Kicked by admin');
 				// Stop everything
@@ -3147,6 +3160,9 @@
 					e.preventDefault();
 				} else if (e.code === 'KeyC' && !e.repeat) {
 					toggleDebugOverlay();
+					e.preventDefault();
+				} else if (e.code === 'KeyH' && !e.repeat) {
+					toggleHeadlight();
 					e.preventDefault();
 				}
 			});

@@ -57,7 +57,7 @@ paths:
     rpiCameraWidth: 1280
     rpiCameraHeight: 720
     rpiCameraFPS: 60
-    rpiCameraBitrate: 2000000
+    rpiCameraBitrate: 4000000
     rpiCameraCodec: hardwareH264
     rpiCameraIDRPeriod: 30
     rpiCameraHardwareH264Profile: baseline

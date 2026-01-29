@@ -331,7 +331,7 @@ paths:
     rpiCameraWidth: 1280
     rpiCameraHeight: 720
     rpiCameraFPS: 60
-    rpiCameraBitrate: 2000000
+    rpiCameraBitrate: 4000000
 ```
 
 **Cloudflare Tunnel (`~/.cloudflared/config.yml` on Pi):**

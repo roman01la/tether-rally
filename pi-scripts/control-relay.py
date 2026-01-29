@@ -25,6 +25,7 @@ import os
 import math
 import serial
 import pynmea2
+import RPi.GPIO as GPIO
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from bno055_reader import BNO055
@@ -75,6 +76,7 @@ CMD_TURBO = 0x08   # Turbo mode toggle (sent to ESP32)
 CMD_TRACTION = 0x09 # Traction control toggle (browser -> Pi)
 CMD_STABILITY = 0x0A # Stability control toggle (browser -> Pi)
 CMD_DEBUG_TELEM = 0x0B # Pi -> Clients: debug telemetry (stability systems)
+CMD_HEADLIGHT = 0x0C # Headlight toggle (browser -> Pi)
 
 # Race sub-commands (sent as payload after CMD_RACE)
 RACE_START_COUNTDOWN = 0x01
@@ -141,6 +143,9 @@ HEADING_SMOOTHING = 0.15    # Low-pass filter alpha (0.1-0.3)
 # Hall sensor (wheel RPM) state
 HALL_GPIO_PIN = 22           # BCM GPIO pin for Hall sensor
 WHEEL_DIAMETER_MM = 118      # Wheel diameter in mm
+
+# Headlight control
+HEADLIGHT_GPIO_PIN = 26      # BCM GPIO pin for headlight MOSFET (IRLZ44N)
 WHEEL_CIRCUMFERENCE = (WHEEL_DIAMETER_MM * 3.14159) / 1000  # Wheel circumference in meters
 hall_sensor = None           # HallRPM instance
 wheel_rpm = 0.0              # Current wheel RPM
@@ -164,6 +169,7 @@ race_start_time = None  # Unix timestamp when race started (after countdown)
 countdown_task = None  # Asyncio task for countdown timer
 
 turbo_mode = False     # Turbo mode: increases limits (ESP32 enforces hard limits)
+headlight_on = False   # Headlight state (controlled via GPIO 26)
 
 # Revoked tokens (persisted to file, keeps last 10)
 REVOKED_TOKENS_FILE = '/home/pi/revoked_tokens.txt'
@@ -1002,6 +1008,12 @@ async def handle_offer(request):
                         logger.info(f"Stability control set by player: {stability_enabled}")
                         # Send updated config back to confirm
                         send_config()
+                elif cmd == CMD_HEADLIGHT:  # HEADLIGHT - player toggling headlights
+                    if len(message) >= 4:
+                        global headlight_on
+                        headlight_on = message[3] == 1
+                        GPIO.output(HEADLIGHT_GPIO_PIN, GPIO.HIGH if headlight_on else GPIO.LOW)
+                        logger.info(f"Headlight set by player: {'ON' if headlight_on else 'OFF'}")
         
         @channel.on("close")
         def on_close():
@@ -1412,6 +1424,12 @@ async def main():
     
     # Load TURN credentials from mediamtx config
     load_turn_credentials()
+    
+    # Setup headlight GPIO
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(HEADLIGHT_GPIO_PIN, GPIO.OUT)
+    GPIO.output(HEADLIGHT_GPIO_PIN, GPIO.LOW)  # Start with headlights off
+    logger.info(f"Headlight GPIO {HEADLIGHT_GPIO_PIN} initialized")
     
     # Start ESP32 beacon discovery
     asyncio.create_task(discover_esp32())
