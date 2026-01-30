@@ -127,44 +127,54 @@ A web-based platform where users can remotely control a real RC car over the int
 
 ```
 arrma-remote/
-├── index.html              # Web UI (backup copy)
 ├── generate-token.js       # Token generator (Node.js/Bun)
 ├── PLAN.md                 # This document
+├── README.md               # Project overview and quick start
 ├── SETUP.md                # Configuration/deployment guide
+├── STABILITY_TESTING.md    # Driving assists testing documentation
 ├── .gitignore              # Excludes secret files
 ├── main/
-│   ├── main.ino            # ESP32 firmware (UDP receiver, FreeRTOS)
+│   ├── main.ino            # ESP32 firmware (UDP receiver, control loop)
 │   ├── config.h            # WiFi credentials (gitignored)
 │   └── config.h.example    # Template for config.h
 ├── arrma-relay/
-│   ├── src/index.ts        # Cloudflare Workers (static + TURN + admin auth + token gen)
+│   ├── src/index.ts        # Cloudflare Workers (static + TURN + admin auth)
 │   ├── public/
 │   │   ├── index.html      # Player UI (served by Workers)
 │   │   ├── admin.html      # Admin dashboard (basic auth protected)
+│   │   ├── latency-test.html # Latency testing page
+│   │   ├── leaderboard.html # Leaderboard display
+│   │   ├── video-decoder-worker.js # WebCodecs video decoder
 │   │   ├── config.js       # URL configuration (gitignored)
-│   │   └── config.js.example # Template for config.js
+│   │   ├── config.js.example # Template for config.js
+│   │   └── tracks/         # Track map data (GeoJSON)
 │   ├── wrangler.jsonc      # Cloudflare Workers config
 │   └── package.json
 ├── pi-scripts/
 │   ├── control-relay.py    # WebRTC DataChannel → UDP relay + race management
-│   ├── bno055_reader.py    # BNO055 IMU driver (heading, yaw rate, linear accel)
+│   ├── bno055_reader.py    # BNO055 IMU driver (heading, yaw rate, roll, pitch)
 │   ├── hall_rpm.py         # Hall sensor RPM reader for wheel speed
-│   ├── traction_control.py # Traction control system (slip detection + throttle limiting)
-│   ├── yaw_rate_controller.py # Yaw-rate stability control (ESC) for oversteer/understeer
+│   ├── traction_control.py # Traction control (slip detection + throttle limiting)
+│   ├── yaw_rate_controller.py # Yaw-rate stability control (oversteer/understeer)
 │   ├── slip_angle_watchdog.py # Slip angle monitoring (heading vs course)
-│   ├── steering_shaper.py  # Latency-aware steering (speed limits, rate limiting, counter-steer)
+│   ├── steering_shaper.py  # Latency-aware steering (speed limits, counter-steer)
 │   ├── control-relay.service # systemd service for relay
 │   ├── deploy.sh           # Quick deploy script to Pi
+│   ├── install-wifi.sh     # WiFi setup helper script
 │   ├── mediamtx.yml.example # MediaMTX config template
-│   ├── .env                 # Pi secrets (gitignored, on Pi only)
-│   ├── .env.example         # Template for Pi .env
+│   ├── .env.example        # Template for Pi .env (actual .env on Pi only)
+│   ├── wifi.nmconnection.example # NetworkManager WiFi config template
+│   ├── wpa_supplicant.conf.example # Legacy wpa_supplicant template
 │   └── update-turn-credentials.sh  # TURN credential refresh script
-└── restreamer/
-    ├── main.go             # Go HTTP server for YouTube restreaming
-    ├── Dockerfile          # Multi-stage build (Go + MediaMTX + FFmpeg)
-    ├── fly.toml            # Fly.io deployment config
-    ├── go.mod              # Go module
-    └── README.md           # Restreamer documentation
+├── restreamer/
+│   ├── main.go             # Go HTTP server for YouTube restreaming
+│   ├── Dockerfile          # Multi-stage build (Go + MediaMTX + FFmpeg)
+│   ├── fly.toml            # Fly.io deployment config
+│   ├── go.mod              # Go module
+│   └── README.md           # Restreamer documentation
+└── scripts/
+    ├── generate_ass.py     # Generate ASS subtitles from telemetry
+    └── render_with_telemetry.sh # FFmpeg overlay rendering script
 ```
 
 ### Secrets Management
@@ -180,21 +190,21 @@ All secrets are externalized for open-source compatibility:
 
 ### Binary Protocol
 
-| Command     | Byte | Payload                                                                                                                                                                              | Description                                                        |
-| ----------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| PING        | 0x00 | seq(2) + timestamp(4)                                                                                                                                                                | Latency measurement                                                |
-| CTRL        | 0x01 | seq(2) + throttle(2) + steering(2)                                                                                                                                                   | Control values (-32767 to 32767)                                   |
-| PONG        | 0x02 | timestamp(4)                                                                                                                                                                         | Response to PING (from ESP32)                                      |
-| RACE        | 0x03 | sub-cmd(1)                                                                                                                                                                           | Race commands (START=0x01, STOP=0x02, RESUME=0x03)                 |
-| STATUS      | 0x04 | sub-cmd(1) + value(1)                                                                                                                                                                | Browser→Pi: VIDEO=0x01, READY=0x02                                 |
-| CONFIG      | 0x05 | reserved(1) + turbo(1) + traction(1) + stability(1)                                                                                                                                  | Pi→Browser: turbo + traction + stability state                     |
-| KICK        | 0x06 | -                                                                                                                                                                                    | Pi→Browser: you have been kicked                                   |
-| TELEM       | 0x07 | race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + gps_heading(2) + fix(1) + imu_heading(2) + calibration(1) + yaw_rate(2) + wheel_dist(4) + roll(2) + pitch(2) | Pi→Clients: telemetry + GPS + IMU + wheel (10Hz, 37 bytes)         |
-| TURBO       | 0x08 | turbo(1)                                                                                                                                                                             | Browser→Pi→ESP32: turbo mode toggle (0=off, 1=on)                  |
-| TRACTION    | 0x09 | traction(1)                                                                                                                                                                          | Browser→Pi: traction control toggle (0=off, 1=on)                  |
-| STABILITY   | 0x0A | stability(1)                                                                                                                                                                         | Browser→Pi: stability control toggle (0=off, 1=on)                 |
-| DEBUG_TELEM | 0x0B | TC(9) + YRC(10) + SAW(4) + SS(5)                                                                                                                                                     | Pi→Browser: debug telemetry for stability systems (10Hz, 31 bytes) |
-| HEADLIGHT   | 0x0C | headlight(1)                                                                                                                                                                         | Browser→Pi: headlight toggle via GPIO 26 (0=off, 1=on)             |
+| Command     | Byte | Payload                                                                                                                                                 | Description                                                        |
+| ----------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| PING        | 0x00 | seq(2) + timestamp(4)                                                                                                                                   | Latency measurement                                                |
+| CTRL        | 0x01 | seq(2) + throttle(2) + steering(2)                                                                                                                      | Control values (-32767 to 32767)                                   |
+| PONG        | 0x02 | timestamp(4)                                                                                                                                            | Response to PING (from ESP32)                                      |
+| RACE        | 0x03 | sub-cmd(1)                                                                                                                                              | Race commands (START=0x01, STOP=0x02, RESUME=0x03)                 |
+| STATUS      | 0x04 | sub-cmd(1) + value(1)                                                                                                                                   | Browser→Pi: VIDEO=0x01, READY=0x02                                 |
+| CONFIG      | 0x05 | reserved(1) + turbo(1) + traction(1) + stability(1)                                                                                                     | Pi→Browser: turbo + traction + stability state                     |
+| KICK        | 0x06 | -                                                                                                                                                       | Pi→Browser: you have been kicked                                   |
+| TELEM       | 0x07 | race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + gps_heading(2) + fix(1) + imu_heading(2) + cal(1) + yaw_rate(2) + wheel_dist(4) | Pi→Clients: telemetry + GPS + IMU + wheel (10Hz, 33 bytes)         |
+| TURBO       | 0x08 | turbo(1)                                                                                                                                                | Browser→Pi→ESP32: turbo mode toggle (0=off, 1=on)                  |
+| TRACTION    | 0x09 | traction(1)                                                                                                                                             | Browser→Pi: traction control toggle (0=off, 1=on)                  |
+| STABILITY   | 0x0A | stability(1)                                                                                                                                            | Browser→Pi: stability control toggle (0=off, 1=on)                 |
+| DEBUG_TELEM | 0x0B | TC(9) + YRC(10) + SAW(4) + SS(5)                                                                                                                        | Pi→Browser: debug telemetry for stability systems (10Hz, 31 bytes) |
+| HEADLIGHT   | 0x0C | headlight(1)                                                                                                                                            | Browser→Pi: headlight toggle via GPIO 26 (0=off, 1=on)             |
 
 Packet format: `seq(uint16 LE) + cmd(uint8) + payload`
 
@@ -239,14 +249,14 @@ Note: Neutral voltages calibrated for ESP32 VDD ~3.12V (low TX batteries)
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
 │  │                         Tether Rally Web UI                           │  │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │  │
-│  │  │   Controls  │  │  FPV Video  │  │     HUD     │  │ Video Stats │  │  │
-│  │  │ Touch/Keys  │  │   WebRTC    │  │   Latency   │  │ res/fps/bps │  │  │
+│  │  │   Controls  │  │  FPV Video  │  │ Telemetry   │  │  Track Map  │  │  │
+│  │  │ Touch/Keys  │  │ + Back PiP  │  │ Speed/Comp  │  │   GPS Pos   │  │  │
 │  │  └──────┬──────┘  └──────┬──────┘  └─────────────┘  └─────────────┘  │  │
 │  └─────────┼────────────────┼────────────────────────────────────────────┘  │
 └────────────┼────────────────┼───────────────────────────────────────────────┘
              │                │
              │ DataChannel    │ WebRTC (WHEP)
-             │ (50Hz CTRL)    │ (720p H.264)
+             │ (50Hz CTRL)    │ (720p H.264 + RTSP back cam)
              ▼                ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
 │                           CLOUDFLARE EDGE                                  │
@@ -255,7 +265,7 @@ Note: Neutral voltages calibrated for ESP32 VDD ~3.12V (low TX batteries)
 │  │    TURN Credentials)     │     │    control.yourdomain.com             │ │
 │  │  ┌────────────────────┐  │     │  ┌────────────────────────────────┐  │ │
 │  │  │  /turn-credentials │  │     │  │   HTTP → Pi:8890 (relay)       │  │ │
-│  │  │  Returns TURN auth │  │     │  │   + Pi:8889 (WHEP)             │  │ │
+│  │  │  Returns TURN auth │  │     │  │   + Pi:8889 (WHEP front+back)  │  │ │
 │  │  └────────────────────┘  │     │  └────────────────────────────────┘  │ │
 │  └──────────────────────────┘     └──────────────────────────────────────┘ │
 │               │                   ┌──────────────────────────────────────┐ │
@@ -270,40 +280,63 @@ Note: Neutral voltages calibrated for ESP32 VDD ~3.12V (low TX batteries)
                 │
            Internet (4G/5G via iPhone Hotspot)
                 │
-┌───────────────┼────────────────────────────────────────────────────────────┐
-│               │              RC CAR (On-board)                             │
-│  ┌────────────┼─────────────┐      ┌─────────────────────────────────────┐ │
-│  │   ESP32    │             │      │     Raspberry Pi Zero 2W            │ │
-│  │            │  UDP 4210   │◄─────│  ┌───────────────────────────────┐  │ │
-│  │  ┌─────────▼─────────┐   │      │  │   control-relay.py            │  │ │
-│  │  │  UDP Receive Task │   │      │  │   - WebRTC DataChannel server │  │ │
-│  │  │    (Core 0)       │   │      │  │   - Token validation          │  │ │
-│  │  │  → target_thr/str │   │      │  │   - UDP forward to ESP32      │  │ │
-│  │  └─────────┬─────────┘   │      │  │   - PING/PONG via Pi          │  │ │
-│  │            │ shared      │      │  └───────────────────────────────┘  │ │
-│  │  ┌─────────▼─────────┐   │      │  ┌───────────────────────────────┐  │ │
-│  │  │ Control Loop      │   │      │  │   Camera Module 3 (Wide)      │  │ │
-│  │  │    (Core 1)       │   │      │  │   720p @ 60fps                │  │ │
-│  │  │  - 200 Hz output  │   │      │  └───────────────┬───────────────┘  │ │
-│  │  │  - EMA smoothing  │   │      │                  │                  │ │
-│  │  │  - Slew limiting  │   │      │  ┌───────────────▼───────────────┐  │ │
-│  │  │  - Staged timeout │   │      │  │        MediaMTX               │  │ │
-│  │  └─────────┬─────────┘   │      │  │   - H.264 HW encode           │  │ │
-│  │            │             │      │  │   - WebRTC server             │  │ │
-│  │  ┌─────────▼─────────┐   │      │  │   - WHEP endpoint             │  │ │
-│  │  │    DAC Output     │   │      │  └───────────────────────────────┘  │ │
-│  │  │  Pin 25: Throttle │   │      │  ┌───────────────────────────────┐  │ │
-│  │  │  Pin 26: Steering │   │      │  │      cloudflared              │  │ │
-│  │  └─────────┬─────────┘   │      │  │   (Tunnel to Cloudflare)      │  │ │
-│  └────────────┼─────────────┘      │  └───────────────────────────────┘  │ │
-│               │                    └─────────────────────────────────────┘ │
-│               ▼                                                            │
-│  ┌───────────────────────────────────────────────────────────────────────┐ │
-│  │                      ARRMA RC Car Receiver                            │ │
-│  │              Throttle Input (1.20V-2.82V, neutral 1.69V)              │ │
-│  │              Steering Input (0.22V-3.05V, neutral 1.66V)              │ │
-│  └───────────────────────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────────────────────────┘
+┌───────────────┼────────────────────────────────────────────────────────────────────┐
+│               │              RC CAR (On-board)                                     │
+│  ┌────────────┼─────────────┐      ┌─────────────────────────────────────────────┐ │
+│  │   ESP32    │             │      │          Raspberry Pi Zero 2W               │ │
+│  │            │  UDP 4210   │◄─────│  ┌─────────────────────────────────────────┐│ │
+│  │  ┌─────────▼─────────┐   │      │  │         control-relay.py                ││ │
+│  │  │  UDP Receive Task │   │      │  │   - WebRTC DataChannel server           ││ │
+│  │  │    (Core 0)       │   │      │  │   - Token validation                    ││ │
+│  │  │  → target_thr/str │   │      │  │   - UDP forward to ESP32                ││ │
+│  │  └─────────┬─────────┘   │      │  │   - Telemetry broadcast (10Hz)          ││ │
+│  │            │ shared      │      │  │   ┌───────────────────────────────────┐ ││ │
+│  │  ┌─────────▼─────────┐   │      │  │   │      Driving Assists Pipeline     │ ││ │
+│  │  │ Control Loop      │   │      │  │   │  - Traction Control (slip detect) │ ││ │
+│  │  │   (Core 0/1)      │   │      │  │   │  - Stability Control (yaw rate)   │ ││ │
+│  │  │  - 200 Hz output  │   │      │  │   │  - Slip Angle Watchdog            │ ││ │
+│  │  │  - EMA smoothing  │   │      │  │   │  - Steering Shaper (latency-aware)│ ││ │
+│  │  │  - Slew limiting  │   │      │  │   └───────────────────────────────────┘ ││ │
+│  │  │  - Staged timeout │   │      │  └─────────────────────────────────────────┘│ │
+│  │  └─────────┬─────────┘   │      │                                             │ │
+│  │            │             │      │  ┌───────────────┐  ┌───────────────────┐   │ │
+│  │  ┌─────────▼─────────┐   │      │  │  BNO055 IMU   │  │   GPS Module      │   │ │
+│  │  │  MCP4728 DAC      │   │      │  │  (I2C)        │  │  (/dev/serial0)   │   │ │
+│  │  │  (I2C 12-bit)     │   │      │  │  - Heading    │  │  - Position       │   │ │
+│  │  │  - CH A: Throttle │   │      │  │  - Yaw rate   │  │  - Speed          │   │ │
+│  │  │  - CH B: Steering │   │      │  │  - Linear acc │  │  - Course         │   │ │
+│  │  └─────────┬─────────┘   │      │  └───────────────┘  └───────────────────┘   │ │
+│  │            │             │      │                                             │ │
+│  └────────────┼─────────────┘      │  ┌───────────────┐  ┌───────────────────┐   │ │
+│               │                    │  │  Hall Sensor  │  │  Headlight GPIO   │   │ │
+│               │                    │  │  (GPIO 22)    │  │  (GPIO 26)        │   │ │
+│               │                    │  │  - Wheel RPM  │  │  - IRLZ44N MOSFET │   │ │
+│               │                    │  │  - Distance   │  └───────────────────┘   │ │
+│               │                    │  └───────────────┘                          │ │
+│               │                    │                                             │ │
+│               │                    │  ┌─────────────────────────────────────────┐│ │
+│               │                    │  │         Camera Module 3 (Wide)          ││ │
+│               │                    │  │         720p @ 60fps H.264              ││ │
+│               │                    │  └───────────────┬─────────────────────────┘│ │
+│               │                    │                  │                          │ │
+│               │                    │  ┌───────────────▼─────────────────────────┐│ │
+│               │                    │  │           MediaMTX                      ││ │
+│               │                    │  │   - H.264 HW encode (front cam)         ││ │
+│               │                    │  │   - RTSP proxy (back IP cam, optional)  ││ │
+│               │                    │  │   - WebRTC server + WHEP endpoint       ││ │
+│               │                    │  └─────────────────────────────────────────┘│ │
+│               │                    │  ┌─────────────────────────────────────────┐│ │
+│               │                    │  │           cloudflared                   ││ │
+│               │                    │  │     (Tunnel to Cloudflare)              ││ │
+│               │                    │  └─────────────────────────────────────────┘│ │
+│               │                    └─────────────────────────────────────────────┘ │
+│               ▼                                                                    │
+│  ┌───────────────────────────────────────────────────────────────────────────────┐ │
+│  │                         ARRMA RC Car Transmitter                              │ │
+│  │              Throttle Input (1.20V-2.82V, neutral 1.69V)                      │ │
+│  │              Steering Input (0.22V-3.05V, neutral 1.66V)                      │ │
+│  └───────────────────────────────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Data Flow Summary
@@ -438,55 +471,24 @@ pi-scripts/
 - Forwards PONG from ESP32 back to browser (latency = browser↔ESP32)
 - Runs as systemd service with FIFO scheduling
 
-**Deployment:**
-
-```bash
-# 1. Deploy Cloudflare Worker
-cd arrma-relay
-npm run deploy
-
-# 2. Set Worker secrets (TURN credentials from Cloudflare dashboard)
-npx wrangler secret put TURN_KEY_ID
-npx wrangler secret put TURN_KEY_API_TOKEN
-
-# 3. Deploy to Pi
-scp pi-scripts/control-relay.py pi@<your-pi-hostname>:~/
-scp pi-scripts/control-relay.service pi@<your-pi-hostname>:~/
-
-# 4. On Pi: Create .env with TOKEN_SECRET (must match generate-token.js)
-echo "TOKEN_SECRET=your-secret-key" > ~/.env
-chmod 600 ~/.env
-
-# 5. Install service
-sudo mv ~/control-relay.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now control-relay
-
-# 6. Generate token for access
-TOKEN_SECRET="your-secret-key" node generate-token.js 60
-```
+**Deployment:** See [SETUP.md](SETUP.md) for detailed deployment instructions.
 
 #### Components
 
-1. **WebRTC DataChannel Relay** ✅ (Pi + Cloudflare TURN)
+1. **WebRTC DataChannel Relay** ✅ (Implemented)
    - P2P connection via TURN for NAT traversal
    - Authenticates users via HMAC token
    - Routes controls to ESP32 via UDP
    - ~30-100ms control latency
 
-2. **Tournament Service** 🔲 (Planned)
-   - Manages race queue
-   - Tracks timing
-   - Updates leaderboard
+2. **Driving Assists** ✅ (Implemented)
+   - Traction control, stability control, slip watchdog
+   - Steering shaper with latency compensation
+   - Real-time sensor fusion (IMU + GPS + wheel)
 
-3. **Database** (PostgreSQL)
-   - Users, tournaments, race results
-   - Leaderboard history
-
-4. **Web App** (React/Next.js)
-   - Control interface
-   - Tournament registration
-   - Live leaderboard
+3. **Tournament Service** 🔲 (Planned)
+   - Queue management, timing, leaderboard
+   - Would require database (PostgreSQL or similar)
 
 #### Tasks
 
@@ -494,12 +496,13 @@ TOKEN_SECRET="your-secret-key" node generate-token.js 60
 - [x] Implement WebRTC DataChannel relay on Pi
 - [x] ESP32 UDP server with beacon discovery
 - [x] Token-based authentication on Pi
-- [ ] Set up PostgreSQL database (for tournament)
-- [ ] Create database schema (for tournament)
+- [x] Implement driving assists (traction, stability, steering)
+- [ ] Implement geofencing for track boundaries
+- [ ] Set up database for tournament system
 
 ---
 
-### Phase 3: Tournament System (Week 3-4)
+### Phase 3: Tournament System 🔲 (Planned)
 
 #### Race Flow
 
@@ -665,30 +668,51 @@ CREATE TABLE race_results (
 
 | Component     | Technology                  | Reason                             |
 | ------------- | --------------------------- | ---------------------------------- |
-| RC Control    | ESP32 + UDP                 | Low latency, simple protocol       |
-| Video Capture | Raspberry Pi + Camera       | Hardware encoding, flexible        |
-| Video Server  | MediaMTX                    | Open source, WebRTC support        |
+| RC Control    | ESP32 + MCP4728 DAC + UDP   | Low latency, clean analog output   |
+| Video Capture | Raspberry Pi + Camera Mod 3 | Hardware H.264, 720p60             |
+| Video Server  | MediaMTX                    | Open source, native WebRTC/WHEP    |
 | Control Relay | Pi + aiortc                 | WebRTC DataChannel to UDP bridge   |
-| Backend       | Cloudflare Workers          | Serverless, global edge            |
-| Database      | PostgreSQL                  | Reliable, good for relational data |
+| Driving Aids  | Python on Pi                | Real-time sensor fusion & control  |
+| Backend       | Cloudflare Workers          | Serverless, global edge, free tier |
 | Frontend      | Vanilla JS (single HTML)    | No build step, simple deployment   |
 | Hosting       | Cloudflare Workers + Tunnel | Free tier, low latency             |
 | Auth          | HMAC tokens                 | Simple, no third-party deps        |
-| Real-time     | WebRTC DataChannel          | P2P, ~50-100ms latency             |
+| Real-time     | WebRTC DataChannel          | P2P, ~30-100ms latency             |
+| Restreamer    | Go + FFmpeg on Fly.io       | WHEP→RTMP, auto-scale to zero      |
 
 ---
 
 ## Hardware Bill of Materials
 
+### On the RC Car
+
+| Item                      | Purpose                  | Est. Cost   |
+| ------------------------- | ------------------------ | ----------- |
+| Raspberry Pi Zero 2W      | Video streaming + relay  | $15         |
+| Pi Camera Module 3 (Wide) | FPV capture              | $35         |
+| BNO055 IMU (optional)     | Heading, yaw rate, accel | $10         |
+| GPS Module (optional)     | Position, speed          | $10         |
+| A3144 Hall Sensor (opt.)  | Wheel RPM & distance     | $2          |
+| IP Camera (optional)      | Rear view PiP            | $15-30      |
+| **Subtotal**              |                          | **~$60-90** |
+
+### On the Transmitter (ARRMA setup)
+
+| Item                | Purpose                    | Est. Cost |
+| ------------------- | -------------------------- | --------- |
+| ESP32-C3 Super Mini | Receives UDP, controls DAC | $5        |
+| MCP4728 12-bit DAC  | Clean analog output        | $5        |
+| **Subtotal**        |                            | **~$10**  |
+
+### Future (Tournament System)
+
 | Item                       | Purpose           | Est. Cost |
 | -------------------------- | ----------------- | --------- |
-| ESP32                      | Car control       | $10       |
-| Raspberry Pi Zero 2W       | Video streaming   | $15       |
-| Pi Camera Module           | FPV capture       | $25       |
-| IR Break-beam sensors (x2) | Timing            | $15       |
+| IR Break-beam sensors (x2) | Timing gates      | $15       |
 | Arduino Nano               | Timing controller | $5        |
-| Power bank                 | Pi power on car   | $20       |
-| **Total**                  |                   | **~$90**  |
+| **Subtotal**               |                   | **~$20**  |
+
+**Total (current implementation):** ~$70-100 depending on optional sensors
 
 ---
 
@@ -724,72 +748,87 @@ This allows testing the core concept before building full tournament system.
 
 ## Next Steps
 
-1. **Current**: System is fully functional for single-user remote control
-2. **Next**: Build basic queue system for multiple users
-3. **Then**: Add manual timing (admin starts/stops timer)
-4. **Later**: Implement IR sensor timing for precision
-5. **Future**: Full tournament system with leaderboards
+1. **Current**: System is fully functional for single-user remote control with driving assists
+2. **Next**: Implement geofencing for track boundaries
+3. **Then**: Build basic queue system for multiple users
+4. **Later**: Add manual timing (admin starts/stops timer)
+5. **Future**: IR sensor timing for precision, full tournament system
 
 ---
 
 ## Completed Work Log
 
+### Core Control System
+
 - [x] ESP32 UDP server with binary protocol
-- [x] DAC voltage control for throttle/steering
+- [x] MCP4728 12-bit DAC for throttle/steering voltage control
+- [x] Hot-plug DAC support (ESP32 connects WiFi first, retries DAC)
+- [x] DAC write optimization (only writes on change)
 - [x] Ping/pong latency measurement
 - [x] Auto-neutral on disconnect (staged: 80ms hold → 250ms neutral)
-- [x] WiFi auto-reconnect
-- [x] WiFi power save disabled for low latency
-- [x] Touch controls with dual-zone layout
-- [x] Relative touch positioning
-- [x] Keyboard support (WASD + arrows)
-- [x] Throttle limiting (asymmetric: 25% forward, 20% backward)
+- [x] WiFi auto-reconnect with power save disabled
 - [x] Safety limits enforced on ESP32 (not browser)
-- [x] Slider visual decoupled from output limit
-- [x] HMAC-SHA256 token authentication
-- [x] Token generator script
-- [x] Racing game UI with FPV video
-- [x] HUD overlay (status, latency, values)
-- [x] LocalStorage token persistence
-- [x] Cloudflare Workers for static files + TURN credentials
-- [x] Raspberry Pi Zero 2W + Camera Module 3 setup
-- [x] MediaMTX WebRTC streaming
-- [x] Cloudflare Tunnel for camera WHEP + control relay
-- [x] Cloudflare TURN for WebRTC NAT traversal
+- [x] Turbo mode toggle (30% → 65% forward)
+
+### User Interface
+
+- [x] Touch controls with dual-zone layout (throttle left, steering right)
+- [x] Keyboard support (WASD + arrows) with smooth interpolation
+- [x] Racing game UI with FPV video background
+- [x] HUD overlay (status, latency, values, speed)
 - [x] Video stats overlay (resolution, fps, bitrate, RTT)
 - [x] Controls disabled until video connects
-- [x] Auto-start MediaMTX and Tunnel on Pi boot
-- [x] TURN credentials refresh script for Pi
-- [x] **WebRTC DataChannel control relay (Pi)**
-- [x] **Direct P2P connection (10-15ms RTT)**
-- [x] **ESP32 FreeRTOS dual-core (UDP Core 0, Control Core 1)**
-- [x] **200 Hz output loop with EMA smoothing**
-- [x] **Slew rate limiting (8.0/sec max change)**
-- [x] **Staged timeout (80ms hold, 250ms neutral)**
-- [x] **Removed Durable Objects (not needed)**
-- [x] **ESP32 beacon discovery for Pi**
-- [x] **50Hz control loop from browser**
-- [x] visibilitychange handler (immediate neutral on tab hide)
-- [x] Increased deadband to 5% (DAC noise filtering)
-- [x] **Auto-reconnect on connection loss (exponential backoff)**
-- [x] **FPV video auto-reconnect**
-- [x] **Proper disconnection UI state (controls disabled)**
-- [x] **Open source preparation (secrets externalized)**
-- [x] **SETUP.md deployment guide**
-- [x] **Admin dashboard (admin.html) with basic auth**
-- [x] **Race state management (idle → countdown → racing)**
-- [x] **Admin kick player with token revocation**
-- [x] **Persistent revoked tokens (file-based, last 10)**
-- [x] **Smooth keyboard steering interpolation**
-- [x] **Video status reporting from browser to Pi**
-- [x] **Throttle limit control from admin (10-50% range)**
-- [x] **ESP32 hard throttle limit raised to 50% forward, 30% backward**
-- [x] **CMD_KICK notification to browser on kick**
-- [x] **Player "Ready" button (must click before admin can start race)**
-- [x] **Admin token generator (web UI)**
-- [x] **Deploy script for Pi (deploy.sh)**
-- [x] **YouTube restreamer on Fly.io (WHEP → RTMP)**
-- [x] **Admin YouTube streaming controls (Go Live / Stop)**
+- [x] Track map overlay with live GPS position
+- [x] Compass HUD (horizontal strip)
+- [x] Debug overlay (C key) for stability system telemetry
+
+### Telemetry & Sensors
+
+- [x] GPS telemetry (position, speed, heading) at 10Hz
+- [x] BNO055 IMU integration (heading, yaw rate, linear acceleration)
+- [x] IMU mount offset calibration
+- [x] Heading blending (IMU when slow, GPS when moving)
+- [x] Hall effect wheel sensor (GPIO 22) for RPM and distance
+- [x] Speed fusion (GPS + wheel complementary filter)
+- [x] Wheel distance tracking
+
+### Driving Assists
+
+- [x] Traction control (Q key): IMU + wheel RPM slip detection
+- [x] Stability control (R key): Yaw-rate based oversteer/understeer intervention
+- [x] Slip angle watchdog: Heading vs course monitoring (>35° threshold)
+- [x] Steering shaper: Speed-based limits, rate limiting, counter-steer assist
+- [x] Debug telemetry for all assist systems
+
+### Infrastructure
+
+- [x] WebRTC DataChannel control relay (Pi) - direct P2P (10-15ms RTT)
+- [x] Cloudflare Workers for static files + TURN credentials
+- [x] Cloudflare Tunnel for camera WHEP + control relay
+- [x] Cloudflare TURN for NAT traversal
+- [x] MediaMTX WebRTC streaming (720p @ 60fps)
+- [x] Auto-reconnect on connection loss (exponential backoff)
+- [x] FPV video auto-reconnect
+
+### Security & Admin
+
+- [x] HMAC-SHA256 token authentication
+- [x] Token generator script + admin web UI
+- [x] LocalStorage token persistence
+- [x] Admin dashboard with basic auth
+- [x] Race state management (idle → countdown → racing)
+- [x] Admin kick player with token revocation
+- [x] Persistent revoked tokens (file-based, last 10)
+- [x] Throttle limit control from admin (10-50% range)
+- [x] Player "Ready" button requirement
+
+### Additional Features
+
+- [x] Headlight control (H key): GPIO 26 MOSFET
+- [x] YouTube restreamer on Fly.io (WHEP → RTMP)
+- [x] Admin YouTube streaming controls
+- [x] Deploy script for Pi (deploy.sh)
+- [x] Back camera PiP support (RTSP via MediaMTX)
 
 ---
 
