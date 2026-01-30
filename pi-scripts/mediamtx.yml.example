@@ -26,3 +26,9 @@ paths:
     rpiCameraIDRPeriod: 15
     rpiCameraHardwareH264Profile: baseline
     rpiCameraDenoise: "off"
+
+  # Back camera (IP camera RTSP stream for rear view PiP)
+  # Uncomment and configure if you have a second camera
+  # back:
+  #   source: rtsp://192.168.0.18/ch0
+  #   sourceOnDemand: true

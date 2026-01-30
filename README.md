@@ -52,6 +52,7 @@ The system streams 720p @ 60fps video from a camera mounted on the car while you
 - **IMU compass (BNO055)** — Stable heading even when stopped
 - **Hall effect wheel sensor** — RPM and distance tracking
 - **Track map overlay** — Mini-map showing live car position
+- **Back camera PiP** — Optional rear view from IP camera (RTSP via MediaMTX)
 - **Debug overlay** (C key) — Real-time stability system telemetry
 
 ### Race Management
@@ -87,6 +88,7 @@ This project was designed for **ARRMA vehicles** with integrated ESC/receivers (
 | GPS Module (optional)     | Speed & position        | ~$10      |
 | BNO055 IMU (optional)     | Compass & stability     | ~$10      |
 | A3144 Hall Sensor (opt.)  | Wheel RPM & distance    | ~$2       |
+| IP Camera (optional)      | Rear view PiP           | ~$15-30   |
 
 **Power:** ARRMA Big Rock ESC has 5V output pins that can power the Pi directly.
 

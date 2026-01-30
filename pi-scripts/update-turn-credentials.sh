@@ -66,6 +66,10 @@ paths:
     rpiCameraHDR: false
     rpiCameraAfMode: manual
     rpiCameraLensPosition: 0.1
+
+  back:
+    source: rtsp://192.168.0.18/ch0
+    sourceOnDemand: true
 EOF
 
 echo "Updated MediaMTX config"

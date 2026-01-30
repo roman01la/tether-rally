@@ -17,6 +17,12 @@ window.CAMERA_WHEP_URL = '';
 // Example: 'https://control.yourdomain.com'
 window.CONTROL_URL = '';
 
+// Back Camera WHEP URL (optional - for rear view PiP)
+// If you have a second camera (e.g., IP camera) for the rear view,
+// configure it in MediaMTX and set the WHEP URL here
+// Example: 'https://cam.yourdomain.com/back/whep'
+window.BACK_CAMERA_WHEP_URL = '';
+
 // YouTube Restreamer (Fly.io)
 // Example: 'https://your-app.fly.dev'
 window.RESTREAMER_URL = '';

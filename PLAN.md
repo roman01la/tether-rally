@@ -70,6 +70,7 @@ A web-based platform where users can remotely control a real RC car over the int
    - Mobile-optimized layout
    - **Track map overlay** with live car position (GPS-based)
    - **Speed display** in km/h from GPS
+   - **Back camera PiP** — Picture-in-picture rear view from IP camera (RTSP→WHEP via MediaMTX)
 
 5. **FPV Video Streaming** ✅ (Implemented)
    - Raspberry Pi Zero 2W + Camera Module 3
@@ -78,6 +79,7 @@ A web-based platform where users can remotely control a real RC car over the int
    - Cloudflare TURN for NAT traversal
    - 720p @ 2Mbps @ 60fps H.264
    - ~150ms glass-to-glass latency over 4G
+   - **Optional back camera** — IP camera RTSP stream proxied through MediaMTX for rear view PiP
 
 6. **Admin Dashboard** ✅ (Implemented)
    - Race state management (idle → countdown → racing)
@@ -153,6 +155,7 @@ arrma-remote/
 │   ├── steering_shaper.py  # Latency-aware steering (speed limits, rate limiting, counter-steer)
 │   ├── control-relay.service # systemd service for relay
 │   ├── deploy.sh           # Quick deploy script to Pi
+│   ├── mediamtx.yml.example # MediaMTX config template
 │   ├── .env                 # Pi secrets (gitignored, on Pi only)
 │   ├── .env.example         # Template for Pi .env
 │   └── update-turn-credentials.sh  # TURN credential refresh script
