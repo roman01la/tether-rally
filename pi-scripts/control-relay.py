@@ -30,10 +30,14 @@ from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from bno055_reader import BNO055
 from hall_rpm import HallRPM
-from traction_control import TractionControl
+from low_speed_traction import LowSpeedTractionManager
 from yaw_rate_controller import YawRateController
 from slip_angle_watchdog import SlipAngleWatchdog
 from steering_shaper import SteeringShaper
+from abs_controller import ABSController, ThrottleStateTracker
+from hill_hold import HillHold
+from coast_control import CoastControl
+from surface_adaptation import SurfaceAdaptation
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,6 +81,11 @@ CMD_TRACTION = 0x09 # Traction control toggle (browser -> Pi)
 CMD_STABILITY = 0x0A # Stability control toggle (browser -> Pi)
 CMD_DEBUG_TELEM = 0x0B # Pi -> Clients: debug telemetry (stability systems)
 CMD_HEADLIGHT = 0x0C # Headlight toggle (browser -> Pi)
+CMD_EXTENDED_TELEM = 0x0D # Pi -> Clients: extended controller telemetry (ABS, Hill Hold, etc.)
+CMD_ABS = 0x0E # ABS toggle (browser -> Pi)
+CMD_HILL_HOLD = 0x0F # Hill hold toggle (browser -> Pi)
+CMD_COAST = 0x10 # Coast control toggle (browser -> Pi)
+CMD_SURFACE_ADAPT = 0x11 # Surface adaptation toggle (browser -> Pi)
 
 # Race sub-commands (sent as payload after CMD_RACE)
 RACE_START_COUNTDOWN = 0x01
@@ -117,13 +126,14 @@ imu_heading = 0.0        # BNO055 fused heading (degrees, 0=North)
 imu_yaw_rate = 0.0       # Gyro Z rotation rate (deg/sec)
 imu_forward_accel = 0.0  # Linear acceleration forward (m/s², gravity-free)
 imu_lateral_accel = 0.0  # Linear acceleration lateral (m/s², positive = right)
+imu_pitch = 0.0          # Pitch angle (degrees, positive = nose up)
 imu_calibration = {'sys': 0, 'gyr': 0, 'acc': 0, 'mag': 0}
 imu_valid = False        # BNO055 connected and reading
 blended_heading = 0.0    # Final heading (blended IMU + GPS)
 imu_task = None          # Asyncio task for IMU reading
 
-# Traction control
-traction_ctrl = None     # TractionControl instance
+# Traction control (unified low-speed traction manager)
+traction_ctrl = None     # LowSpeedTractionManager instance
 traction_enabled = False # Admin toggle for traction control
 
 # Yaw-rate stability control
@@ -135,6 +145,19 @@ slip_watchdog = None     # SlipAngleWatchdog instance
 
 # Steering shaper (latency-aware steering, shares enable with stability)
 steering_shaper = None   # SteeringShaper instance
+
+# New vehicle dynamics controllers
+abs_ctrl = None          # ABSController instance
+throttle_tracker = None  # ThrottleStateTracker for ESC state machine
+hill_hold_ctrl = None    # HillHold instance
+coast_ctrl = None        # CoastControl instance
+surface_adapt = None     # SurfaceAdaptation instance
+
+# New controller enable flags
+abs_enabled = False          # ABS toggle
+hill_hold_enabled = False    # Hill hold toggle
+coast_enabled = False        # Coast control toggle
+surface_adapt_enabled = False # Surface adaptation toggle
 
 # Heading blend parameters
 SPEED_THRESHOLD_LOW = 1.0   # km/h - below this, use IMU only
@@ -300,27 +323,24 @@ def broadcast_debug_telemetry():
     # Get status from each system
     # Traction Control: slip_detected(1), slip_reason(1), throttle_mult(1), wheel_accel(2), vehicle_accel(2), slip_ratio(2)
     tc_slip_detected = 0
-    tc_slip_reason = 0  # 0=none, 1=throttle_low, 2=accel_mismatch, 3=slip_ratio
+    tc_slip_reason = 0  # 0=none, 1=launch, 2=transition, 3=cruise
     tc_throttle_mult = 100  # 0-100 percent
     tc_wheel_accel = 0  # *10, signed int16
     tc_vehicle_accel = 0  # *10, signed int16
     tc_slip_ratio = 0  # *100, signed int16
     
     # Always send sensor data for debugging, even when disabled
+    # LowSpeedTractionManager has: _slip_detected, _phase, slip_ratio, wheel_accel, vehicle_accel
     if traction_ctrl:
-        tc_slip_detected = 1 if (traction_enabled and traction_ctrl.slip_detected) else 0
-        if traction_enabled:
-            reason = traction_ctrl.slip_reason
-            if "accel_mismatch" in reason:
-                tc_slip_reason = 2
-            elif "slip_ratio" in reason:
-                tc_slip_reason = 3
-            elif "throttle_low" in reason:
-                tc_slip_reason = 1
-        tc_throttle_mult = int(traction_ctrl.get_throttle_multiplier() * 100) if traction_enabled else 100
-        tc_wheel_accel = int(max(-3276.7, min(3276.7, traction_ctrl.wheel_accel)) * 10)
-        tc_vehicle_accel = int(max(-3276.7, min(3276.7, traction_ctrl.vehicle_accel)) * 10)
-        tc_slip_ratio = int(max(-327.67, min(327.67, traction_ctrl.slip_ratio)) * 100)
+        status = traction_ctrl.get_status()
+        tc_slip_detected = 1 if (traction_enabled and status['slip_detected']) else 0
+        # Encode phase as reason: 1=launch, 2=transition, 3=cruise
+        phase_map = {'launch': 1, 'transition': 2, 'cruise': 3}
+        tc_slip_reason = phase_map.get(status['phase'], 0) if traction_enabled else 0
+        tc_throttle_mult = int(status['throttle_multiplier'] * 100) if traction_enabled else 100
+        tc_wheel_accel = int(max(-3276.7, min(3276.7, status['wheel_accel'])) * 10)
+        tc_vehicle_accel = int(max(-3276.7, min(3276.7, status['vehicle_accel'])) * 10)
+        tc_slip_ratio = int(max(-327.67, min(327.67, status['slip_ratio'])) * 100)
     
     # Yaw Rate Controller: intervention_type(1), throttle_mult(1), virtual_brake(2), yaw_desired(2), yaw_actual(2), yaw_error(2)
     yrc_intervention = 0  # 0=none, 1=oversteer, 2=understeer
@@ -398,6 +418,95 @@ def broadcast_debug_telemetry():
             logger.warning(f"Error sending debug telemetry: {e}")
 
 
+def broadcast_extended_telemetry():
+    """Broadcast extended controller telemetry at 5Hz (ABS, Hill Hold, Coast, Surface)"""
+    global data_channels
+    global abs_ctrl, abs_enabled
+    global hill_hold_ctrl, hill_hold_enabled
+    global coast_ctrl, coast_enabled
+    global surface_adapt, surface_adapt_enabled
+    global imu_pitch
+    
+    # ABS Controller: active(1), direction(1), phase(1), slip_ratio(2), esc_state(1) = 6 bytes
+    abs_active = 0
+    abs_direction = 0  # 0=stopped, 1=forward, 2=backward
+    abs_phase = 0      # 0=none, 1=apply, 2=release
+    abs_slip_ratio = 0  # *100, signed int16
+    abs_esc_state = 0  # 0=neutral, 1=braking, 2=reverse_armed, 3=reversing
+    
+    if abs_ctrl:
+        status = abs_ctrl.get_status()
+        abs_active = 1 if (abs_enabled and status['active']) else 0
+        abs_direction = {'stopped': 0, 'forward': 1, 'backward': 2}.get(status['direction'], 0)
+        abs_phase = {'none': 0, 'apply': 1, 'release': 2}.get(status['phase'], 0)
+        abs_slip_ratio = int(max(-327.67, min(327.67, status['slip_ratio'])) * 100)
+    
+    if throttle_tracker:
+        esc_map = {'neutral': 0, 'braking': 1, 'reverse_armed': 2, 'reversing': 3}
+        abs_esc_state = esc_map.get(throttle_tracker.get_state(), 0)
+    
+    # Hill Hold: active(1), hold_force(2), blend(1), pitch(2) = 6 bytes
+    hh_active = 0
+    hh_hold_force = 0   # signed int16
+    hh_blend = 100      # 0-100 percent
+    hh_pitch = 0        # *10, signed int16
+    
+    if hill_hold_ctrl:
+        status = hill_hold_ctrl.get_status()
+        hh_active = 1 if (hill_hold_enabled and status['active']) else 0
+        hh_hold_force = status['hold_force']
+        hh_blend = int(status['blend_factor'] * 100)
+        hh_pitch = int(max(-1800, min(1800, imu_pitch)) * 10)
+    
+    # Coast Control: active(1), injection(2) = 3 bytes
+    coast_active = 0
+    coast_injection = 0  # int16
+    
+    if coast_ctrl:
+        status = coast_ctrl.get_status()
+        coast_active = 1 if (coast_enabled and status['active']) else 0
+        coast_injection = status['injection']
+    
+    # Surface Adaptation: grip(2), multiplier(2), measuring(1) = 5 bytes
+    surf_grip = 70       # *100, grip coefficient (default 0.7)
+    surf_multiplier = 100  # *100, threshold multiplier
+    surf_measuring = 0
+    
+    if surface_adapt:
+        status = surface_adapt.get_status()
+        surf_grip = int(max(0, min(200, status['estimated_grip'])) * 100)
+        surf_multiplier = int(max(0, min(500, status['threshold_multiplier'])) * 100)
+        surf_measuring = 1 if (surface_adapt_enabled and status['measurement_active']) else 0
+    
+    # Pack extended telemetry
+    # Format: seq(2) + cmd(1) + 
+    #   ABS: active(1) + direction(1) + phase(1) + slip_ratio(2) + esc_state(1) = 6 bytes
+    #   HH: active(1) + hold_force(2) + blend(1) + pitch(2) = 6 bytes
+    #   Coast: active(1) + injection(2) = 3 bytes
+    #   Surface: grip(2) + multiplier(2) + measuring(1) = 5 bytes
+    # Total: 3 + 6 + 6 + 3 + 5 = 23 bytes
+    
+    message = struct.pack('<HB BBBhB BhBh Bh HHB',
+        0, CMD_EXTENDED_TELEM,
+        # ABS (6 bytes)
+        abs_active, abs_direction, abs_phase, abs_slip_ratio, abs_esc_state,
+        # Hill Hold (6 bytes)
+        hh_active, hh_hold_force, hh_blend, hh_pitch,
+        # Coast Control (3 bytes)
+        coast_active, coast_injection,
+        # Surface Adaptation (5 bytes)
+        surf_grip, surf_multiplier, surf_measuring
+    )
+    
+    # Send to all connected data channels
+    for channel in data_channels[:]:
+        try:
+            if channel.readyState == "open":
+                channel.send(message)
+        except Exception as e:
+            logger.warning(f"Error sending extended telemetry: {e}")
+
+
 async def gps_reader_loop():
     """Read GPS data from serial port in background"""
     global gps_lat, gps_lon, gps_speed, gps_heading, gps_fix
@@ -466,11 +575,18 @@ async def gps_reader_loop():
             await asyncio.sleep(1)
 
 async def telemetry_broadcast_loop():
-    """Broadcast telemetry at 10Hz"""
+    """Broadcast telemetry at 10Hz, extended telemetry at 5Hz"""
+    extended_counter = 0
     while True:
         if race_state == "racing":
             broadcast_telemetry()
             broadcast_debug_telemetry()
+            
+            # Extended telemetry at 5Hz (every other cycle)
+            extended_counter += 1
+            if extended_counter >= 2:
+                broadcast_extended_telemetry()
+                extended_counter = 0
         await asyncio.sleep(0.1)  # 10Hz
 
 
@@ -504,9 +620,12 @@ def save_imu_calibration(data: bytes):
 
 async def imu_reader_loop():
     """Read BNO055 heading and acceleration at 20Hz"""
-    global imu_heading, imu_yaw_rate, imu_forward_accel, imu_lateral_accel, imu_calibration, imu_valid
+    global imu_heading, imu_yaw_rate, imu_forward_accel, imu_lateral_accel, imu_pitch, imu_calibration, imu_valid
     global traction_ctrl, traction_enabled
     global stability_ctrl, stability_enabled
+    global abs_ctrl, abs_enabled, throttle_tracker
+    global hill_hold_ctrl, hill_hold_enabled
+    global surface_adapt, surface_adapt_enabled
     
     # Load saved calibration BEFORE init
     saved_cal = load_imu_calibration()
@@ -550,18 +669,34 @@ async def imu_reader_loop():
                 imu_forward_accel = lin_accel[1]
                 imu_lateral_accel = -lin_accel[0]  # Negate for upside-down mount
             
+            # Read pitch for hill hold (upside-down mount negates pitch)
+            pitch = bno.read_pitch()
+            if pitch is not None:
+                imu_pitch = -pitch  # Negate for upside-down mount
+            
             imu_calibration = bno.read_calibration()
+            
+            # Get grip multiplier from surface adaptation (if enabled)
+            grip_multiplier = 1.0
+            if surface_adapt and surface_adapt_enabled and imu_valid:
+                surface_adapt.update(
+                    lateral_accel=imu_lateral_accel,
+                    speed=fused_speed,
+                    steering=current_steering
+                )
+                grip_multiplier = surface_adapt.get_traction_threshold_multiplier()
             
             # Update traction control (at IMU rate for responsiveness)
             # Always update for sensor monitoring, even when disabled
             if traction_ctrl and imu_valid:
                 traction_ctrl.update(
-                    imu_forward_accel=imu_forward_accel,
-                    imu_yaw_rate=imu_yaw_rate,
                     wheel_speed=wheel_speed,
-                    gps_speed=gps_speed,
-                    gps_valid=gps_fix,
-                    throttle_input=current_throttle
+                    ground_speed=fused_speed,
+                    imu_forward_accel=imu_forward_accel,
+                    yaw_rate=imu_yaw_rate,
+                    throttle_input=current_throttle,
+                    grip_multiplier=grip_multiplier,
+                    gps_valid=gps_fix
                 )
             
             # Update yaw-rate stability control (at IMU rate for fast reaction)
@@ -834,9 +969,12 @@ def log_stability_interventions(orig_throttle, new_throttle, orig_steering, new_
         intervening = True
         reasons.append(f"slip:{slip_watchdog.slip_angle:.0f}°")
     
-    if traction_ctrl and traction_ctrl.slip_detected:
-        intervening = True
-        reasons.append(f"traction:{traction_ctrl.slip_reason}")
+    # LowSpeedTractionManager uses get_status() to check intervention
+    if traction_ctrl:
+        status = traction_ctrl.get_status()
+        if status['slip_detected']:
+            intervening = True
+            reasons.append(f"traction:{status['phase']}(slip={status['slip_ratio']:.0%})")
     
     if steering_shaper:
         if steering_shaper.rate_limited:
@@ -964,6 +1102,10 @@ async def handle_offer(request):
             global race_state, current_throttle, current_steering
             global traction_ctrl, traction_enabled
             global stability_ctrl, stability_enabled
+            global abs_ctrl, abs_enabled, throttle_tracker
+            global hill_hold_ctrl, hill_hold_enabled
+            global coast_ctrl, coast_enabled
+            global surface_adapt, surface_adapt_enabled
             global video_connected, player_ready, turbo_mode
             # New packet format: seq(2) + cmd(1) + payload
             if isinstance(message, bytes) and len(message) >= 3:
@@ -983,7 +1125,21 @@ async def handle_offer(request):
                         limited_throttle = current_throttle
                         shaped_steering = current_steering
                         
-                        # Apply steering shaper if enabled (latency-aware steering)
+                        # Update ESC state tracker for ABS
+                        esc_state = "neutral"
+                        if throttle_tracker:
+                            esc_state = throttle_tracker.update(current_throttle, fused_speed)
+                        
+                        # Get grip multiplier from surface adaptation
+                        grip_multiplier = 1.0
+                        if surface_adapt and surface_adapt_enabled:
+                            grip_multiplier = surface_adapt.get_traction_threshold_multiplier()
+                        
+                        # === CONTROLLER CHAIN ===
+                        # Order: SteeringShaper → HillHold → LowSpeedTraction → 
+                        #        Stability → SlipWatchdog → ABS → CoastControl
+                        
+                        # 1. Apply steering shaper if enabled (latency-aware steering)
                         if steering_shaper and stability_enabled:
                             shaped_steering = steering_shaper.update(
                                 steering_input=current_steering,
@@ -991,17 +1147,49 @@ async def handle_offer(request):
                                 yaw_rate=imu_yaw_rate
                             )
                         
-                        # Apply traction control if enabled (wheelspin prevention)
-                        if traction_ctrl and traction_enabled and limited_throttle > 0:
-                            limited_throttle = traction_ctrl.apply_to_throttle(limited_throttle)
+                        # 2. Apply hill hold if enabled (holds car on slopes)
+                        if hill_hold_ctrl and hill_hold_enabled:
+                            limited_throttle = hill_hold_ctrl.update(
+                                pitch_deg=imu_pitch,
+                                speed_kmh=fused_speed,
+                                throttle_input=limited_throttle,
+                                timestamp=time.time()
+                            )
                         
-                        # Apply stability control if enabled (yaw-rate limiting)
+                        # 3. Apply traction control if enabled (wheelspin prevention)
+                        if traction_ctrl and traction_enabled and limited_throttle > 0:
+                            limited_throttle = traction_ctrl.apply_to_throttle(
+                                limited_throttle,
+                                yaw_rate=imu_yaw_rate,
+                                grip_multiplier=grip_multiplier
+                            )
+                        
+                        # 4. Apply stability control if enabled (yaw-rate limiting)
                         if stability_ctrl and stability_enabled and limited_throttle > 0:
                             limited_throttle = stability_ctrl.apply_to_throttle(limited_throttle)
                         
-                        # Apply slip angle watchdog if enabled (drift/slide recovery)
+                        # 5. Apply slip angle watchdog if enabled (drift/slide recovery)
                         if slip_watchdog and stability_enabled and limited_throttle > 0:
                             limited_throttle = slip_watchdog.apply_to_throttle(limited_throttle)
+                        
+                        # 6. Apply ABS if enabled (prevents wheel lockup during braking)
+                        if abs_ctrl and abs_enabled and limited_throttle < 0:
+                            limited_throttle = abs_ctrl.update(
+                                wheel_speed=wheel_speed,
+                                vehicle_speed=fused_speed,
+                                imu_forward_accel=imu_forward_accel,
+                                throttle_input=limited_throttle,
+                                esc_state=esc_state,
+                                timestamp_ms=int(time.time() * 1000)
+                            )
+                        
+                        # 7. Apply coast control if enabled (smooths throttle release)
+                        if coast_ctrl and coast_enabled:
+                            limited_throttle = coast_ctrl.update(
+                                throttle_input=limited_throttle,
+                                speed_kmh=fused_speed,
+                                timestamp=time.time()
+                            )
                         
                         # Log interventions for tuning (rate-limited to avoid spam)
                         log_stability_interventions(
@@ -1070,6 +1258,44 @@ async def handle_offer(request):
                         headlight_on = message[3] == 1
                         GPIO.output(HEADLIGHT_GPIO_PIN, GPIO.HIGH if headlight_on else GPIO.LOW)
                         logger.info(f"Headlight set by player: {'ON' if headlight_on else 'OFF'}")
+                elif cmd == CMD_ABS:  # ABS - player toggling ABS
+                    if len(message) >= 4:
+                        abs_enabled = message[3] == 1
+                        if abs_ctrl:
+                            abs_ctrl.enabled = abs_enabled
+                            if not abs_enabled:
+                                abs_ctrl.reset()
+                        if throttle_tracker and not abs_enabled:
+                            throttle_tracker.reset()
+                        logger.info(f"ABS set by player: {abs_enabled}")
+                        send_config()
+                elif cmd == CMD_HILL_HOLD:  # HILL_HOLD - player toggling hill hold
+                    if len(message) >= 4:
+                        hill_hold_enabled = message[3] == 1
+                        if hill_hold_ctrl:
+                            hill_hold_ctrl.enabled = hill_hold_enabled
+                            if not hill_hold_enabled:
+                                hill_hold_ctrl.reset()
+                        logger.info(f"Hill hold set by player: {hill_hold_enabled}")
+                        send_config()
+                elif cmd == CMD_COAST:  # COAST - player toggling coast control
+                    if len(message) >= 4:
+                        coast_enabled = message[3] == 1
+                        if coast_ctrl:
+                            coast_ctrl.enabled = coast_enabled
+                            if not coast_enabled:
+                                coast_ctrl.reset()
+                        logger.info(f"Coast control set by player: {coast_enabled}")
+                        send_config()
+                elif cmd == CMD_SURFACE_ADAPT:  # SURFACE_ADAPT - player toggling surface adaptation
+                    if len(message) >= 4:
+                        surface_adapt_enabled = message[3] == 1
+                        if surface_adapt:
+                            surface_adapt.enabled = surface_adapt_enabled
+                            if not surface_adapt_enabled:
+                                surface_adapt.reset()
+                        logger.info(f"Surface adaptation set by player: {surface_adapt_enabled}")
+                        send_config()
         
         @channel.on("close")
         def on_close():
@@ -1283,19 +1509,25 @@ def send_race_command(sub_cmd: int, payload: bytes = b''):
     return True
 
 def send_config():
-    """Send current config (turbo mode, traction control, stability control) to browser"""
+    """Send current config (turbo mode, traction control, stability control, etc.) to browser"""
     global control_channel, turbo_mode, traction_enabled, stability_enabled
+    global abs_enabled, hill_hold_enabled, coast_enabled, surface_adapt_enabled
     
     if control_channel is None or control_channel.readyState != "open":
         return False
     
-    # Format: seq(2) + cmd(1) + reserved(1) + turbo(1) + traction(1) + stability(1)
-    message = struct.pack('<HBbBBB', 0, CMD_CONFIG, 0, 
+    # Format: seq(2) + cmd(1) + reserved(1) + turbo(1) + traction(1) + stability(1) + 
+    #         abs(1) + hill_hold(1) + coast(1) + surface_adapt(1) = 11 bytes
+    message = struct.pack('<HBbBBBBBBB', 0, CMD_CONFIG, 0, 
                           1 if turbo_mode else 0, 
                           1 if traction_enabled else 0,
-                          1 if stability_enabled else 0)
+                          1 if stability_enabled else 0,
+                          1 if abs_enabled else 0,
+                          1 if hill_hold_enabled else 0,
+                          1 if coast_enabled else 0,
+                          1 if surface_adapt_enabled else 0)
     control_channel.send(message)
-    logger.info(f"Sent config: turbo={turbo_mode}, traction={traction_enabled}, stability={stability_enabled}")
+    logger.info(f"Sent config: turbo={turbo_mode}, traction={traction_enabled}, stability={stability_enabled}, abs={abs_enabled}, hill_hold={hill_hold_enabled}, coast={coast_enabled}, surface_adapt={surface_adapt_enabled}")
     return True
 
 def send_turbo_to_esp32():
@@ -1475,6 +1707,7 @@ async def handle_set_traction_control(request):
 
 async def main():
     global telemetry_task, gps_task, imu_task, hall_sensor, traction_ctrl
+    global abs_ctrl, throttle_tracker, hill_hold_ctrl, coast_ctrl, surface_adapt
     
     # Load revoked tokens from file
     load_revoked_tokens()
@@ -1499,10 +1732,10 @@ async def main():
         logger.warning("Hall sensor not available, using GPS speed only")
         hall_sensor = None
     
-    # Initialize traction control (disabled by default)
-    traction_ctrl = TractionControl()
+    # Initialize traction control - unified low-speed traction manager (disabled by default)
+    traction_ctrl = LowSpeedTractionManager()
     traction_ctrl.enabled = False  # Must be enabled via admin API
-    logger.info("Traction control initialized (disabled by default)")
+    logger.info("Low-speed traction manager initialized (disabled by default)")
     
     # Initialize yaw-rate stability control (disabled by default)
     # Wheelbase: ARRMA Big Rock 3S ≈ 320mm
@@ -1520,6 +1753,27 @@ async def main():
     steering_shaper = SteeringShaper()
     steering_shaper.enabled = False
     logger.info("Steering shaper initialized (disabled by default)")
+    
+    # Initialize ABS controller (disabled by default)
+    abs_ctrl = ABSController()
+    abs_ctrl.enabled = False
+    throttle_tracker = ThrottleStateTracker()
+    logger.info("ABS controller initialized (disabled by default)")
+    
+    # Initialize hill hold (disabled by default)
+    hill_hold_ctrl = HillHold()
+    hill_hold_ctrl.enabled = False
+    logger.info("Hill hold initialized (disabled by default)")
+    
+    # Initialize coast control (disabled by default)
+    coast_ctrl = CoastControl()
+    coast_ctrl.enabled = False
+    logger.info("Coast control initialized (disabled by default)")
+    
+    # Initialize surface adaptation (disabled by default)
+    surface_adapt = SurfaceAdaptation()
+    surface_adapt.enabled = False
+    logger.info("Surface adaptation initialized (disabled by default)")
     
     # Start GPS reader loop
     gps_task = asyncio.create_task(gps_reader_loop())

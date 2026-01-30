@@ -6,8 +6,12 @@ Testing scenarios for the ARRMA Big Rock 3S stability control systems.
 
 | System                        | Purpose                                  | Key Metrics                               |
 | ----------------------------- | ---------------------------------------- | ----------------------------------------- |
-| **Traction Control (TC)**     | Prevents wheelspin on acceleration       | Slip Detected, Wheel Accel, Vehicle Accel |
+| **Traction Control (TC)**     | Prevents wheelspin on acceleration       | Slip Detected, Phase, Wheel/Vehicle Accel |
 | **Yaw Rate Controller (ESC)** | Catches oversteer/understeer             | Intervention type, Desired vs Actual yaw  |
+| **ABS**                       | Anti-lock braking                        | ESC State, Direction, Phase, Slip Ratio   |
+| **Hill Hold**                 | Holds car on inclines                    | Pitch, Hold Force, Blend                  |
+| **Coast Control**             | Prevents rollback during coasting        | Active, Injection amount                  |
+| **Surface Adaptation**        | Adjusts for grip level                   | Grip estimate, Multiplier, Measuring      |
 | **Slip Angle Watchdog**       | Monitors drift angle                     | Heading vs Course angle                   |
 | **Steering Shaper**           | Limits steering at speed, smooths inputs | Limit %, Rate Limited, Counter-Steer      |
 
@@ -35,7 +39,7 @@ Testing scenarios for the ARRMA Big Rock 3S stability control systems.
 - Wheel Accel spikes > 3 m/s²
 - Vehicle Accel stays low < 1 m/s²
 - Slip Detected: **yes**
-- Reason: `accel_mismatch`
+- Phase: `launch` → `transition` → `cruise`
 - Multiplier drops (down to 70%)
 - TC bar in pipeline turns orange/smaller
 
@@ -192,6 +196,112 @@ Testing scenarios for the ARRMA Big Rock 3S stability control systems.
 - Counter-Steer: **yes**
 - Assist Amount shows value
 - System may assist your correction
+
+**Status:** ❌ Not yet verified
+
+---
+
+### 8. ABS - Wheel Lockup Prevention
+
+**Goal:** Trigger ABS intervention during braking
+
+**Setup:**
+
+- Open area with some speed
+- Smooth surface (asphalt/concrete)
+
+**Procedure:**
+
+1. Drive forward at moderate speed
+2. Apply full reverse throttle (brake hard)
+3. Watch debug panel for ABS activity
+
+**Expected:**
+
+- ESC State: `N` → `BRK` → `ARM` → `REV`
+- ABS badge lights up during lockup
+- Phase cycles: **APPLY** ↔ **RELEASE**
+- Slip ratio spikes then recovers
+- Braking feels modulated, not locked
+
+**Status:** ❌ Not yet verified
+
+---
+
+### 9. Hill Hold - Incline Detection
+
+**Goal:** Trigger hill hold on a slope
+
+**Setup:**
+
+- Find an incline (driveway, ramp, hill)
+- Car pointing uphill
+
+**Procedure:**
+
+1. Drive partway up the incline
+2. Release throttle completely
+3. Watch pitch gauge and HOLD badge
+
+**Expected:**
+
+- Pitch shows positive angle (e.g., +8°)
+- HOLD badge activates
+- Hold Force bar shows positive (forward force)
+- Car holds position, doesn't roll back
+- Blend shows throttle handoff when resuming
+
+**Status:** ❌ Not yet verified
+
+---
+
+### 10. Coast Control - Rollback Prevention
+
+**Goal:** Trigger coast injection
+
+**Setup:**
+
+- Slight incline or resistance situation
+- After acceleration
+
+**Procedure:**
+
+1. Accelerate forward
+2. Release throttle (coast)
+3. Watch for injection bar in debug panel
+
+**Expected:**
+
+- Coast Active: **ACTIVE**
+- Injection shows small positive value
+- Prevents unwanted deceleration/rollback
+- Smooth coasting behavior
+
+**Status:** ❌ Not yet verified
+
+---
+
+### 11. Surface Adaptation - Grip Estimation
+
+**Goal:** See grip estimate change with surface
+
+**Setup:**
+
+- Drive on multiple surfaces (asphalt, dirt, grass)
+
+**Procedure:**
+
+1. Drive on high-grip surface (asphalt)
+2. Note grip reading (~0.8-1.0)
+3. Transition to low-grip surface (gravel, grass)
+4. Watch measuring dot and grip bar
+
+**Expected:**
+
+- Measuring dot pulses when sampling
+- Grip value changes with surface (lower on loose)
+- Multiplier adjusts TC/ESC thresholds
+- Low grip → higher multiplier (more sensitive)
 
 **Status:** ❌ Not yet verified
 

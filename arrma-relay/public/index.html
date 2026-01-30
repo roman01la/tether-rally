@@ -1072,6 +1072,268 @@
 				font-size: 7px;
 				color: #666;
 			}
+
+			/* === NEW: ABS, Hill Hold, Coast, Surface Adaptation Styles === */
+
+			/* ESC State Machine (for ABS) */
+			.esc-state-machine {
+				display: flex;
+				gap: 4px;
+				margin: 8px 0;
+				font-size: 9px;
+			}
+			.esc-state {
+				padding: 3px 6px;
+				background: rgba(40, 40, 60, 0.8);
+				border-radius: 3px;
+				color: #666;
+				border: 1px solid transparent;
+				transition: all 0.15s;
+			}
+			.esc-state.active {
+				background: rgba(80, 120, 180, 0.6);
+				color: #fff;
+				border-color: #5af;
+			}
+			.esc-state-arrow {
+				color: #444;
+				align-self: center;
+			}
+
+			/* Direction Indicator */
+			.direction-indicator {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				margin: 4px 0;
+			}
+			.direction-arrow {
+				font-size: 16px;
+				width: 24px;
+				text-align: center;
+			}
+			.direction-arrow.forward {
+				color: #5c7;
+			}
+			.direction-arrow.backward {
+				color: #fa5;
+			}
+			.direction-arrow.stopped {
+				color: #666;
+			}
+
+			/* ABS Badge */
+			.abs-badge {
+				display: inline-block;
+				padding: 2px 8px;
+				background: rgba(40, 40, 60, 0.8);
+				border: 1px solid #444;
+				border-radius: 4px;
+				font-weight: bold;
+				font-size: 10px;
+				color: #666;
+				margin-left: 8px;
+			}
+			.abs-badge.active {
+				background: rgba(255, 80, 80, 0.4);
+				border-color: #f55;
+				color: #f88;
+				animation: pulse-badge 0.3s ease-in-out infinite alternate;
+			}
+			@keyframes pulse-badge {
+				from {
+					opacity: 0.7;
+				}
+				to {
+					opacity: 1;
+				}
+			}
+
+			/* Pitch Gauge (for Hill Hold) */
+			.pitch-gauge {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				margin: 8px 0;
+			}
+			.pitch-arc {
+				width: 60px;
+				height: 60px;
+				position: relative;
+				background: rgba(40, 40, 60, 0.8);
+				border-radius: 50%;
+				overflow: hidden;
+			}
+			.pitch-horizon {
+				position: absolute;
+				left: 5%;
+				right: 5%;
+				top: 50%;
+				height: 2px;
+				background: linear-gradient(90deg, transparent 0%, #5af 50%, transparent 100%);
+				transform-origin: center;
+				transition: transform 0.15s;
+			}
+			.pitch-center-mark {
+				position: absolute;
+				left: 50%;
+				top: 50%;
+				width: 8px;
+				height: 8px;
+				margin: -4px 0 0 -4px;
+				border: 2px solid #fa5;
+				border-radius: 50%;
+				background: transparent;
+			}
+			.pitch-value {
+				font-size: 14px;
+				font-weight: bold;
+				min-width: 50px;
+			}
+			.pitch-value.uphill {
+				color: #5c7;
+			}
+			.pitch-value.downhill {
+				color: #fa5;
+			}
+
+			/* Hold Force Bar */
+			.hold-force-bar {
+				width: 100%;
+				height: 16px;
+				background: rgba(40, 40, 60, 0.8);
+				border-radius: 3px;
+				position: relative;
+				margin: 6px 0;
+			}
+			.hold-force-fill {
+				position: absolute;
+				top: 2px;
+				bottom: 2px;
+				left: 50%;
+				background: #5af;
+				border-radius: 2px;
+				transition:
+					width 0.1s,
+					left 0.1s;
+			}
+			.hold-force-fill.positive {
+				background: #5c7;
+			}
+			.hold-force-fill.negative {
+				background: #fa5;
+			}
+			.hold-force-center {
+				position: absolute;
+				left: 50%;
+				top: 0;
+				bottom: 0;
+				width: 1px;
+				background: #666;
+			}
+
+			/* Grip Meter (for Surface Adaptation) */
+			.grip-meter {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				margin: 8px 0;
+			}
+			.grip-bar {
+				flex: 1;
+				height: 16px;
+				background: rgba(40, 40, 60, 0.8);
+				border-radius: 3px;
+				position: relative;
+				overflow: hidden;
+			}
+			.grip-fill {
+				position: absolute;
+				top: 2px;
+				bottom: 2px;
+				left: 2px;
+				border-radius: 2px;
+				transition:
+					width 0.3s,
+					background 0.3s;
+			}
+			.grip-fill.low {
+				background: linear-gradient(90deg, #f33, #fa3);
+			}
+			.grip-fill.medium {
+				background: linear-gradient(90deg, #fa3, #5c7);
+			}
+			.grip-fill.high {
+				background: linear-gradient(90deg, #5c7, #3a5);
+			}
+			.grip-value {
+				font-size: 12px;
+				font-weight: bold;
+				min-width: 40px;
+				text-align: right;
+			}
+
+			/* Measuring Dot */
+			.measuring-dot {
+				width: 8px;
+				height: 8px;
+				border-radius: 50%;
+				background: #444;
+				margin-left: 6px;
+			}
+			.measuring-dot.active {
+				background: #5af;
+				animation: pulse-dot 0.5s ease-in-out infinite;
+			}
+			@keyframes pulse-dot {
+				0%,
+				100% {
+					opacity: 1;
+					transform: scale(1);
+				}
+				50% {
+					opacity: 0.5;
+					transform: scale(0.8);
+				}
+			}
+
+			/* Coast Injection Bar */
+			.coast-bar {
+				width: 100%;
+				height: 12px;
+				background: rgba(40, 40, 60, 0.8);
+				border-radius: 3px;
+				position: relative;
+				margin: 6px 0;
+				overflow: hidden;
+			}
+			.coast-fill {
+				position: absolute;
+				top: 2px;
+				bottom: 2px;
+				left: 2px;
+				background: linear-gradient(90deg, #5af, #58f);
+				border-radius: 2px;
+				transition: width 0.05s;
+			}
+
+			/* HOLD Badge (for Hill Hold) */
+			.hold-badge {
+				display: inline-block;
+				padding: 2px 8px;
+				background: rgba(40, 40, 60, 0.8);
+				border: 1px solid #444;
+				border-radius: 4px;
+				font-weight: bold;
+				font-size: 10px;
+				color: #666;
+				margin-left: 8px;
+			}
+			.hold-badge.active {
+				background: rgba(90, 175, 255, 0.3);
+				border-color: #5af;
+				color: #8cf;
+			}
 		</style>
 	</head>
 	<body>
@@ -1190,13 +1452,19 @@
 				<div id="steering-thumb" class="slider-thumb"></div>
 			</div>
 
-			<div id="instructions">WASD / Arrow keys | E = Turbo | Q = Traction | R = Stability | H = Headlight | C = Debug</div>
+			<div id="instructions">
+				WASD / Arrow keys | E = Turbo | Q = TC | R = ESC | B = ABS | G = Hill | N = Coast | F = Surface | H = Light | C = Debug
+			</div>
 
 			<!-- Control Buttons -->
 			<div id="control-buttons-container">
 				<button id="stability-btn" class="control-btn disabled" onclick="toggleStability()">⚖️ ESC (R)</button>
 				<button id="traction-btn" class="control-btn disabled" onclick="toggleTraction()">🛞 TC (Q)</button>
+				<button id="abs-btn" class="control-btn disabled" onclick="toggleAbs()">🛑 ABS (B)</button>
 				<button id="turbo-btn" class="control-btn disabled" onclick="toggleTurbo()">🚀 TURBO (E)</button>
+				<button id="hill-hold-btn" class="control-btn disabled" onclick="toggleHillHold()">⛰️ HILL (G)</button>
+				<button id="coast-btn" class="control-btn disabled" onclick="toggleCoast()">🌊 COAST (N)</button>
+				<button id="surface-btn" class="control-btn disabled" onclick="toggleSurface()">🛣️ SURF (F)</button>
 			</div>
 
 			<!-- Debug Overlay -->
@@ -1241,7 +1509,7 @@
 						Traction Control
 					</div>
 					<div class="debug-row"><span class="debug-label">Slip Detected</span><span class="debug-value" id="tc-slip">—</span></div>
-					<div class="debug-row"><span class="debug-label">Reason</span><span class="debug-value" id="tc-reason">—</span></div>
+					<div class="debug-row"><span class="debug-label">Phase</span><span class="debug-value" id="tc-phase">—</span></div>
 					<div class="debug-row"><span class="debug-label">Multiplier</span><span class="debug-value" id="tc-mult">—</span></div>
 					<div class="debug-row"><span class="debug-label">Wheel Accel</span><span class="debug-value" id="tc-wheel-accel">—</span></div>
 					<div class="debug-row">
@@ -1314,6 +1582,93 @@
 					<div class="debug-row"><span class="debug-label">Counter-Steer</span><span class="debug-value" id="ss-counter">—</span></div>
 					<div class="debug-row"><span class="debug-label">Assist Amount</span><span class="debug-value" id="ss-assist">—</span></div>
 				</div>
+
+				<!-- ABS Controller -->
+				<div class="debug-section">
+					<div class="debug-section-title">
+						<div class="debug-status-dot" id="abs-status-dot"></div>
+						ABS
+						<span class="abs-badge" id="abs-badge">ABS</span>
+					</div>
+					<div class="debug-row">
+						<span class="debug-label">ESC State</span>
+						<div class="esc-state-machine">
+							<span class="esc-state" id="esc-neutral">N</span>
+							<span class="esc-state-arrow">→</span>
+							<span class="esc-state" id="esc-braking">BRK</span>
+							<span class="esc-state-arrow">→</span>
+							<span class="esc-state" id="esc-armed">ARM</span>
+							<span class="esc-state-arrow">→</span>
+							<span class="esc-state" id="esc-reversing">REV</span>
+						</div>
+					</div>
+					<div class="debug-row">
+						<span class="debug-label">Direction</span>
+						<div class="direction-indicator">
+							<span class="direction-arrow" id="abs-direction">⏹</span>
+							<span class="debug-value" id="abs-direction-text">stopped</span>
+						</div>
+					</div>
+					<div class="debug-row"><span class="debug-label">Phase</span><span class="debug-value" id="abs-phase">—</span></div>
+					<div class="debug-row"><span class="debug-label">Slip Ratio</span><span class="debug-value" id="abs-slip-ratio">—</span></div>
+				</div>
+
+				<!-- Hill Hold -->
+				<div class="debug-section">
+					<div class="debug-section-title">
+						<div class="debug-status-dot" id="hh-status-dot"></div>
+						Hill Hold
+						<span class="hold-badge" id="hh-badge">HOLD</span>
+					</div>
+					<div class="pitch-gauge">
+						<div class="pitch-arc">
+							<div class="pitch-horizon" id="pitch-horizon"></div>
+							<div class="pitch-center-mark"></div>
+						</div>
+						<div>
+							<div class="pitch-value" id="hh-pitch">0°</div>
+							<div class="slip-gauge-label">Pitch</div>
+						</div>
+					</div>
+					<div class="debug-row"><span class="debug-label">Hold Force</span><span class="debug-value" id="hh-force">—</span></div>
+					<div class="hold-force-bar">
+						<div class="hold-force-center"></div>
+						<div class="hold-force-fill" id="hh-force-bar"></div>
+					</div>
+					<div class="debug-row"><span class="debug-label">Blend</span><span class="debug-value" id="hh-blend">—</span></div>
+				</div>
+
+				<!-- Coast Control -->
+				<div class="debug-section">
+					<div class="debug-section-title">
+						<div class="debug-status-dot" id="coast-status-dot"></div>
+						Coast Control
+					</div>
+					<div class="debug-row"><span class="debug-label">Active</span><span class="debug-value" id="coast-active">—</span></div>
+					<div class="debug-row"><span class="debug-label">Injection</span><span class="debug-value" id="coast-injection">—</span></div>
+					<div class="coast-bar">
+						<div class="coast-fill" id="coast-bar"></div>
+					</div>
+				</div>
+
+				<!-- Surface Adaptation -->
+				<div class="debug-section">
+					<div class="debug-section-title">
+						<div class="debug-status-dot" id="surface-status-dot"></div>
+						Surface Adaptation
+						<div class="measuring-dot" id="surface-measuring"></div>
+					</div>
+					<div class="grip-meter">
+						<span class="debug-label">Grip</span>
+						<div class="grip-bar">
+							<div class="grip-fill" id="surface-grip-bar"></div>
+						</div>
+						<span class="grip-value" id="surface-grip">0.70</span>
+					</div>
+					<div class="debug-row">
+						<span class="debug-label">Threshold ×</span><span class="debug-value" id="surface-multiplier">—</span>
+					</div>
+				</div>
 			</div>
 		</div>
 
@@ -1376,6 +1731,11 @@
 			const CMD_STABILITY = 0x0a; // Browser -> Pi: stability control toggle
 			const CMD_DEBUG_TELEM = 0x0b; // Pi -> Browser: debug telemetry (stability systems)
 			const CMD_HEADLIGHT = 0x0c; // Browser -> Pi: headlight toggle
+			const CMD_EXTENDED_TELEM = 0x0d; // Pi -> Browser: extended telemetry (ABS, Hill Hold, etc.)
+			const CMD_ABS = 0x0e; // Browser -> Pi: ABS toggle
+			const CMD_HILL_HOLD = 0x0f; // Browser -> Pi: hill hold toggle
+			const CMD_COAST = 0x10; // Browser -> Pi: coast control toggle
+			const CMD_SURFACE_ADAPT = 0x11; // Browser -> Pi: surface adaptation toggle
 
 			// Race sub-commands
 			const RACE_START_COUNTDOWN = 0x01;
@@ -1443,6 +1803,10 @@
 			let tractionMode = false; // Traction control state
 			let stabilityMode = false; // Stability (yaw-rate) control state
 			let headlightMode = false; // Headlight state
+			let absMode = false; // ABS state
+			let hillHoldMode = false; // Hill hold state
+			let coastMode = false; // Coast control state
+			let surfaceAdaptMode = false; // Surface adaptation state
 			let debugOverlayVisible = false; // Debug overlay visibility
 			const keyStep = 1.0;
 			const strStep = 1.0;
@@ -1485,14 +1849,26 @@
 
 			// Debug telemetry state (stability systems)
 			let debugTelem = {
-				// Traction Control
-				tc: { slipDetected: false, slipReason: 0, throttleMult: 100, wheelAccel: 0, vehicleAccel: 0, slipRatio: 0 },
+				// Traction Control (LowSpeedTractionManager)
+				tc: { slipDetected: false, phase: 0, throttleMult: 100, wheelAccel: 0, vehicleAccel: 0, slipRatio: 0 },
 				// Yaw Rate Controller
 				yrc: { intervention: 0, throttleMult: 100, virtualBrake: 0, yawDesired: 0, yawActual: 0, yawError: 0 },
 				// Slip Angle Watchdog
 				saw: { slipAngle: 0, intervention: false, throttleMult: 100 },
 				// Steering Shaper
 				ss: { steeringLimit: 100, rateLimited: false, counterSteer: false, counterAmount: 0 },
+			};
+
+			// Extended telemetry state (new controllers)
+			let extendedTelem = {
+				// ABS Controller
+				abs: { active: false, direction: 0, phase: 0, slipRatio: 0, escState: 0 },
+				// Hill Hold
+				hh: { active: false, holdForce: 0, blend: 100, pitch: 0 },
+				// Coast Control
+				coast: { active: false, injection: 0 },
+				// Surface Adaptation
+				surface: { grip: 70, multiplier: 100, measuring: false },
 			};
 
 			// DOM elements
@@ -1523,6 +1899,10 @@
 			const turboBtn = document.getElementById('turbo-btn');
 			const tractionBtn = document.getElementById('traction-btn');
 			const stabilityBtn = document.getElementById('stability-btn');
+			const absBtn = document.getElementById('abs-btn');
+			const hillHoldBtn = document.getElementById('hill-hold-btn');
+			const coastBtn = document.getElementById('coast-btn');
+			const surfaceBtn = document.getElementById('surface-btn');
 
 			// Back camera PiP elements
 			const backCameraPip = document.getElementById('back-camera-pip');
@@ -2418,7 +2798,8 @@
 			}
 
 			function handleConfigCommand(data) {
-				// Format: seq(2) + cmd(1) + reserved(1) + turbo(1) + traction(1) + stability(1)
+				// Format: seq(2) + cmd(1) + reserved(1) + turbo(1) + traction(1) + stability(1) +
+				//         abs(1) + hill_hold(1) + coast(1) + surface_adapt(1) = 11 bytes
 				if (data.byteLength >= 6) {
 					const view = new DataView(data);
 					turboMode = view.getUint8(4) !== 0;
@@ -2426,10 +2807,41 @@
 					if (data.byteLength >= 7) {
 						stabilityMode = view.getUint8(6) !== 0;
 					}
+					if (data.byteLength >= 8) {
+						absMode = view.getUint8(7) !== 0;
+					}
+					if (data.byteLength >= 9) {
+						hillHoldMode = view.getUint8(8) !== 0;
+					}
+					if (data.byteLength >= 10) {
+						coastMode = view.getUint8(9) !== 0;
+					}
+					if (data.byteLength >= 11) {
+						surfaceAdaptMode = view.getUint8(10) !== 0;
+					}
 					updateTurboIndicator();
 					updateTractionIndicator();
 					updateStabilityIndicator();
-					console.log('Config received: turbo =', turboMode, ', traction =', tractionMode, ', stability =', stabilityMode);
+					updateAbsIndicator();
+					updateHillHoldIndicator();
+					updateCoastIndicator();
+					updateSurfaceIndicator();
+					console.log(
+						'Config received: turbo =',
+						turboMode,
+						', traction =',
+						tractionMode,
+						', stability =',
+						stabilityMode,
+						', abs =',
+						absMode,
+						', hillHold =',
+						hillHoldMode,
+						', coast =',
+						coastMode,
+						', surface =',
+						surfaceAdaptMode,
+					);
 				}
 			}
 
@@ -2458,6 +2870,10 @@
 			const turboFeature = createToggleFeature('turbo', CMD_TURBO, turboBtn);
 			const tractionFeature = createToggleFeature('traction', CMD_TRACTION, tractionBtn);
 			const stabilityFeature = createToggleFeature('stability', CMD_STABILITY, stabilityBtn);
+			const absFeature = createToggleFeature('abs', CMD_ABS, absBtn);
+			const hillHoldFeature = createToggleFeature('hillHold', CMD_HILL_HOLD, hillHoldBtn);
+			const coastFeature = createToggleFeature('coast', CMD_COAST, coastBtn);
+			const surfaceFeature = createToggleFeature('surface', CMD_SURFACE_ADAPT, surfaceBtn);
 
 			// Convenience functions for backward compatibility
 			function updateTurboIndicator() {
@@ -2469,6 +2885,18 @@
 			function updateStabilityIndicator() {
 				stabilityFeature.updateIndicator(stabilityMode);
 			}
+			function updateAbsIndicator() {
+				absFeature.updateIndicator(absMode);
+			}
+			function updateHillHoldIndicator() {
+				hillHoldFeature.updateIndicator(hillHoldMode);
+			}
+			function updateCoastIndicator() {
+				coastFeature.updateIndicator(coastMode);
+			}
+			function updateSurfaceIndicator() {
+				surfaceFeature.updateIndicator(surfaceAdaptMode);
+			}
 			function updateTurboButton() {
 				turboFeature.updateButton();
 			}
@@ -2477,6 +2905,18 @@
 			}
 			function updateStabilityButton() {
 				stabilityFeature.updateButton();
+			}
+			function updateAbsButton() {
+				absFeature.updateButton();
+			}
+			function updateHillHoldButton() {
+				hillHoldFeature.updateButton();
+			}
+			function updateCoastButton() {
+				coastFeature.updateButton();
+			}
+			function updateSurfaceButton() {
+				surfaceFeature.updateButton();
 			}
 
 			function toggleTurbo() {
@@ -2498,6 +2938,34 @@
 				stabilityMode = !stabilityMode;
 				stabilityFeature.send(stabilityMode);
 				updateStabilityIndicator();
+			}
+
+			function toggleAbs() {
+				if (!isConnected) return;
+				absMode = !absMode;
+				absFeature.send(absMode);
+				updateAbsIndicator();
+			}
+
+			function toggleHillHold() {
+				if (!isConnected) return;
+				hillHoldMode = !hillHoldMode;
+				hillHoldFeature.send(hillHoldMode);
+				updateHillHoldIndicator();
+			}
+
+			function toggleCoast() {
+				if (!isConnected) return;
+				coastMode = !coastMode;
+				coastFeature.send(coastMode);
+				updateCoastIndicator();
+			}
+
+			function toggleSurface() {
+				if (!isConnected) return;
+				surfaceAdaptMode = !surfaceAdaptMode;
+				surfaceFeature.send(surfaceAdaptMode);
+				updateSurfaceIndicator();
 			}
 
 			function toggleHeadlight() {
@@ -2569,9 +3037,9 @@
 				// Parse debug telemetry packet (31 bytes total)
 				// Format: seq(2) + cmd(1) + TC(9) + YRC(10) + SAW(4) + SS(5)
 
-				// Traction Control (offset 3-11)
+				// Traction Control (offset 3-11) - now uses LowSpeedTractionManager phases
 				debugTelem.tc.slipDetected = view.getUint8(3) === 1;
-				debugTelem.tc.slipReason = view.getUint8(4);
+				debugTelem.tc.phase = view.getUint8(4); // 0=none, 1=launch, 2=transition, 3=cruise
 				debugTelem.tc.throttleMult = view.getUint8(5);
 				debugTelem.tc.wheelAccel = view.getInt16(6, true) / 10;
 				debugTelem.tc.vehicleAccel = view.getInt16(8, true) / 10;
@@ -2599,6 +3067,38 @@
 				// Update debug overlay if visible
 				if (debugOverlayVisible) {
 					updateDebugOverlay();
+				}
+			}
+
+			function handleExtendedTelemetry(view) {
+				// Parse extended telemetry packet (23 bytes total)
+				// Format: seq(2) + cmd(1) + ABS(6) + HH(6) + Coast(3) + Surface(5)
+
+				// ABS Controller (offset 3-8)
+				extendedTelem.abs.active = view.getUint8(3) === 1;
+				extendedTelem.abs.direction = view.getUint8(4); // 0=stopped, 1=forward, 2=backward
+				extendedTelem.abs.phase = view.getUint8(5); // 0=none, 1=apply, 2=release
+				extendedTelem.abs.slipRatio = view.getInt16(6, true) / 100;
+				extendedTelem.abs.escState = view.getUint8(8); // 0=neutral, 1=braking, 2=reverse_armed, 3=reversing
+
+				// Hill Hold (offset 9-14)
+				extendedTelem.hh.active = view.getUint8(9) === 1;
+				extendedTelem.hh.holdForce = view.getInt16(10, true);
+				extendedTelem.hh.blend = view.getUint8(12);
+				extendedTelem.hh.pitch = view.getInt16(13, true) / 10;
+
+				// Coast Control (offset 15-17)
+				extendedTelem.coast.active = view.getUint8(15) === 1;
+				extendedTelem.coast.injection = view.getInt16(16, true);
+
+				// Surface Adaptation (offset 18-22)
+				extendedTelem.surface.grip = view.getUint16(18, true) / 100;
+				extendedTelem.surface.multiplier = view.getUint16(20, true) / 100;
+				extendedTelem.surface.measuring = view.getUint8(22) === 1;
+
+				// Update debug overlay if visible
+				if (debugOverlayVisible) {
+					updateExtendedDebugOverlay();
 				}
 			}
 
@@ -2631,7 +3131,7 @@
 
 				document.getElementById('pipe-final').style.height = `${afterSaw}%`;
 
-				// Traction Control section
+				// Traction Control section - now shows phases from LowSpeedTractionManager
 				const tcDot = document.getElementById('tc-status-dot');
 				if (!tractionMode) {
 					tcDot.className = 'debug-status-dot';
@@ -2643,10 +3143,12 @@
 					tcDot.className = 'debug-status-dot idle';
 				}
 
-				const reasonNames = ['none', 'throttle_low', 'accel_mismatch', 'slip_ratio'];
+				const phaseNames = ['—', 'launch', 'transition', 'cruise'];
 				document.getElementById('tc-slip').textContent = tc.slipDetected ? 'YES' : 'no';
 				document.getElementById('tc-slip').className = `debug-value${tc.slipDetected ? ' negative' : ''}`;
-				document.getElementById('tc-reason').textContent = reasonNames[tc.slipReason] || '—';
+				const phaseEl = document.getElementById('tc-phase');
+				phaseEl.textContent = phaseNames[tc.phase] || '—';
+				phaseEl.className = `debug-value${tc.phase === 1 ? ' warning' : ''}`; // highlight launch phase
 				document.getElementById('tc-mult').textContent = `${tc.throttleMult}%`;
 				document.getElementById('tc-mult').className = `debug-value${tc.throttleMult < 100 ? ' warning' : ''}`;
 				document.getElementById('tc-wheel-accel').textContent = `${tc.wheelAccel.toFixed(1)} m/s²`;
@@ -2738,6 +3240,146 @@
 				document.getElementById('ss-counter').textContent = ss.counterSteer ? 'ACTIVE' : 'no';
 				document.getElementById('ss-counter').className = `debug-value${ss.counterSteer ? ' positive' : ''}`;
 				document.getElementById('ss-assist').textContent = ss.counterAmount !== 0 ? ss.counterAmount : '—';
+			}
+
+			function updateExtendedDebugOverlay() {
+				const abs = extendedTelem.abs;
+				const hh = extendedTelem.hh;
+				const coast = extendedTelem.coast;
+				const surface = extendedTelem.surface;
+
+				// === ABS Section ===
+				const absDot = document.getElementById('abs-status-dot');
+				const absBadge = document.getElementById('abs-badge');
+				if (!absMode) {
+					absDot.className = 'debug-status-dot';
+					absBadge.className = 'abs-badge';
+				} else if (abs.active) {
+					absDot.className = 'debug-status-dot critical';
+					absBadge.className = 'abs-badge active';
+				} else {
+					absDot.className = 'debug-status-dot idle';
+					absBadge.className = 'abs-badge';
+				}
+
+				// ESC State Machine
+				const escStates = ['esc-neutral', 'esc-braking', 'esc-armed', 'esc-reversing'];
+				escStates.forEach((id, idx) => {
+					const el = document.getElementById(id);
+					el.className = `esc-state${abs.escState === idx ? ' active' : ''}`;
+				});
+
+				// Direction indicator
+				const dirArrow = document.getElementById('abs-direction');
+				const dirText = document.getElementById('abs-direction-text');
+				const dirNames = ['stopped', 'forward', 'backward'];
+				const dirArrows = ['⏹', '⬆', '⬇'];
+				const dirClasses = ['stopped', 'forward', 'backward'];
+				dirArrow.textContent = dirArrows[abs.direction] || '⏹';
+				dirArrow.className = `direction-arrow ${dirClasses[abs.direction] || 'stopped'}`;
+				dirText.textContent = dirNames[abs.direction] || 'stopped';
+
+				// ABS Phase
+				const phaseEl = document.getElementById('abs-phase');
+				const phaseNames = ['—', 'APPLY', 'RELEASE'];
+				phaseEl.textContent = phaseNames[abs.phase] || '—';
+				phaseEl.className = `debug-value${abs.phase === 1 ? ' warning' : abs.phase === 2 ? ' positive' : ''}`;
+
+				// Slip ratio
+				document.getElementById('abs-slip-ratio').textContent = abs.slipRatio.toFixed(2);
+
+				// === Hill Hold Section ===
+				const hhDot = document.getElementById('hh-status-dot');
+				const hhBadge = document.getElementById('hh-badge');
+				if (!hillHoldMode) {
+					hhDot.className = 'debug-status-dot';
+					hhBadge.className = 'hold-badge';
+				} else if (hh.active) {
+					hhDot.className = 'debug-status-dot active';
+					hhBadge.className = 'hold-badge active';
+				} else {
+					hhDot.className = 'debug-status-dot idle';
+					hhBadge.className = 'hold-badge';
+				}
+
+				// Pitch gauge (horizon rotates with pitch)
+				const horizon = document.getElementById('pitch-horizon');
+				const pitchClamped = Math.max(-30, Math.min(30, hh.pitch));
+				horizon.style.transform = `rotate(${-pitchClamped}deg)`;
+
+				// Pitch value
+				const pitchEl = document.getElementById('hh-pitch');
+				pitchEl.textContent = `${hh.pitch.toFixed(1)}°`;
+				pitchEl.className = `pitch-value${hh.pitch > 3 ? ' uphill' : hh.pitch < -3 ? ' downhill' : ''}`;
+
+				// Hold force bar (centered, extends left or right)
+				const forceBar = document.getElementById('hh-force-bar');
+				const forceNormalized = (Math.abs(hh.holdForce) / 400) * 50; // Max 400 = 50% width
+				forceBar.style.width = `${Math.min(50, forceNormalized)}%`;
+				if (hh.holdForce >= 0) {
+					forceBar.style.left = '50%';
+					forceBar.className = 'hold-force-fill positive';
+				} else {
+					forceBar.style.left = `${50 - forceNormalized}%`;
+					forceBar.className = 'hold-force-fill negative';
+				}
+				document.getElementById('hh-force').textContent = hh.holdForce;
+
+				// Blend
+				document.getElementById('hh-blend').textContent = `${hh.blend}%`;
+
+				// === Coast Control Section ===
+				const coastDot = document.getElementById('coast-status-dot');
+				if (!coastMode) {
+					coastDot.className = 'debug-status-dot';
+				} else if (coast.active) {
+					coastDot.className = 'debug-status-dot active';
+				} else {
+					coastDot.className = 'debug-status-dot idle';
+				}
+
+				document.getElementById('coast-active').textContent = coast.active ? 'ACTIVE' : 'no';
+				document.getElementById('coast-active').className = `debug-value${coast.active ? ' positive' : ''}`;
+				document.getElementById('coast-injection').textContent = coast.injection;
+
+				// Coast bar
+				const coastBar = document.getElementById('coast-bar');
+				const injectionPct = Math.min(100, coast.injection);
+				coastBar.style.width = `${injectionPct}%`;
+
+				// === Surface Adaptation Section ===
+				const surfaceDot = document.getElementById('surface-status-dot');
+				const measuringDot = document.getElementById('surface-measuring');
+				if (!surfaceAdaptMode) {
+					surfaceDot.className = 'debug-status-dot';
+					measuringDot.className = 'measuring-dot';
+				} else if (surface.measuring) {
+					surfaceDot.className = 'debug-status-dot active';
+					measuringDot.className = 'measuring-dot active';
+				} else {
+					surfaceDot.className = 'debug-status-dot idle';
+					measuringDot.className = 'measuring-dot';
+				}
+
+				// Grip bar (0.2 to 1.2 range)
+				const gripBar = document.getElementById('surface-grip-bar');
+				const gripPct = Math.max(0, Math.min(100, ((surface.grip - 0.2) / 1.0) * 100));
+				gripBar.style.width = `${gripPct}%`;
+				if (surface.grip < 0.5) {
+					gripBar.className = 'grip-fill low';
+				} else if (surface.grip < 0.8) {
+					gripBar.className = 'grip-fill medium';
+				} else {
+					gripBar.className = 'grip-fill high';
+				}
+
+				const gripValue = document.getElementById('surface-grip');
+				gripValue.textContent = surface.grip.toFixed(2);
+
+				// Multiplier
+				const multEl = document.getElementById('surface-multiplier');
+				multEl.textContent = `${surface.multiplier.toFixed(1)}×`;
+				multEl.className = `debug-value${surface.multiplier > 2.0 ? ' warning' : ''}`;
 			}
 
 			function toggleDebugOverlay() {
@@ -3018,6 +3660,10 @@
 					updateTurboButton();
 					updateTractionButton();
 					updateStabilityButton();
+					updateAbsButton();
+					updateHillHoldButton();
+					updateCoastButton();
+					updateSurfaceButton();
 				};
 
 				controlChannel.onmessage = (event) => {
@@ -3060,6 +3706,10 @@
 							// Handle debug telemetry broadcast (stability systems)
 							else if (cmd === CMD_DEBUG_TELEM && view.byteLength >= 31) {
 								handleDebugTelemetry(view);
+							}
+							// Handle extended telemetry broadcast (ABS, Hill Hold, Coast, Surface)
+							else if (cmd === CMD_EXTENDED_TELEM && view.byteLength >= 23) {
+								handleExtendedTelemetry(view);
 							}
 						}
 					}
@@ -3351,6 +4001,18 @@
 					e.preventDefault();
 				} else if (e.code === 'KeyH' && !e.repeat) {
 					toggleHeadlight();
+					e.preventDefault();
+				} else if (e.code === 'KeyB' && !e.repeat) {
+					toggleAbs();
+					e.preventDefault();
+				} else if (e.code === 'KeyG' && !e.repeat) {
+					toggleHillHold();
+					e.preventDefault();
+				} else if (e.code === 'KeyN' && !e.repeat) {
+					toggleCoast();
+					e.preventDefault();
+				} else if (e.code === 'KeyF' && !e.repeat) {
+					toggleSurface();
 					e.preventDefault();
 				}
 			});

@@ -158,6 +158,51 @@ class BNO055:
             logger.warning(f"BNO055 euler read error: {e}")
             return None
     
+    def read_pitch(self) -> float | None:
+        """
+        Read pitch angle (nose up/down) in degrees.
+        
+        Positive = nose up (climbing)
+        Negative = nose down (descending)
+        
+        Note: When IMU is mounted upside-down, pitch sign may need to be negated
+        in the calling code (see control-relay.py IMU_MOUNT_OFFSET handling).
+        
+        Returns None on error.
+        """
+        if not self._initialized or not self.bus:
+            return None
+        try:
+            # Read pitch from euler angles (offset 0x1E, 2 bytes)
+            data = self.bus.read_i2c_block_data(self.address, REG_EUL_PITCH_LSB, 2)
+            # BNO055 outputs pitch as signed 16-bit in 1/16 degree units
+            pitch_raw = struct.unpack('<h', bytes(data))[0]
+            return pitch_raw / 16.0
+        except Exception as e:
+            logger.warning(f"BNO055 pitch read error: {e}")
+            return None
+    
+    def read_roll(self) -> float | None:
+        """
+        Read roll angle (tilt left/right) in degrees.
+        
+        Positive = roll right
+        Negative = roll left
+        
+        Returns None on error.
+        """
+        if not self._initialized or not self.bus:
+            return None
+        try:
+            # Read roll from euler angles (offset 0x1C, 2 bytes)
+            data = self.bus.read_i2c_block_data(self.address, REG_EUL_ROLL_LSB, 2)
+            # BNO055 outputs roll as signed 16-bit in 1/16 degree units
+            roll_raw = struct.unpack('<h', bytes(data))[0]
+            return roll_raw / 16.0
+        except Exception as e:
+            logger.warning(f"BNO055 roll read error: {e}")
+            return None
+    
     def read_yaw_rate(self) -> float | None:
         """
         Read gyro Z axis (yaw rate) in degrees per second.

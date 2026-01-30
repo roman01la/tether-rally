@@ -21,6 +21,10 @@ A web-based platform where users can remotely control a real RC car over the int
    - **Turbo mode** (E key or button): Normal 30% fwd / 30% back → Turbo 65% fwd / 30% back
    - **Traction control** (Q key or button): IMU + wheel RPM slip detection with automatic throttle limiting
    - **Stability control** (R key or button): Yaw-rate based ESC for oversteer/understeer intervention
+   - **ABS** (B key or button): Anti-lock braking with ESC state machine (neutral→braking→armed→reversing)
+   - **Hill Hold** (G key or button): Automatic brake hold on inclines using pitch detection
+   - **Coast Control** (N key or button): Throttle injection during coasting to prevent rollback
+   - **Surface Adaptation** (F key or button): Dynamic grip estimation from acceleration data
    - **Slip angle watchdog**: Monitors heading vs course, intervenes on sustained drift (>35°)
    - **Steering shaper**: Speed-based limits, rate limiting, counter-steer assist for latency compensation
    - **Debug overlay** (C key): Real-time stability telemetry (throttle pipeline, yaw comparison, slip gauge)
@@ -154,10 +158,14 @@ arrma-remote/
 │   ├── control-relay.py    # WebRTC DataChannel → UDP relay + race management
 │   ├── bno055_reader.py    # BNO055 IMU driver (heading, yaw rate, roll, pitch)
 │   ├── hall_rpm.py         # Hall sensor RPM reader for wheel speed
-│   ├── traction_control.py # Traction control (slip detection + throttle limiting)
+│   ├── low_speed_traction.py # Traction control (launch/transition/cruise phases)
 │   ├── yaw_rate_controller.py # Yaw-rate stability control (oversteer/understeer)
 │   ├── slip_angle_watchdog.py # Slip angle monitoring (heading vs course)
 │   ├── steering_shaper.py  # Latency-aware steering (speed limits, counter-steer)
+│   ├── abs_controller.py   # ABS with ESC state machine
+│   ├── hill_hold.py        # Hill hold with pitch detection
+│   ├── coast_control.py    # Coast throttle injection
+│   ├── surface_adaptation.py # Dynamic grip estimation
 │   ├── control-relay.service # systemd service for relay
 │   ├── deploy.sh           # Quick deploy script to Pi
 │   ├── install-wifi.sh     # WiFi setup helper script
@@ -197,7 +205,7 @@ All secrets are externalized for open-source compatibility:
 | PONG        | 0x02 | timestamp(4)                                                                                                                                            | Response to PING (from ESP32)                                      |
 | RACE        | 0x03 | sub-cmd(1)                                                                                                                                              | Race commands (START=0x01, STOP=0x02, RESUME=0x03)                 |
 | STATUS      | 0x04 | sub-cmd(1) + value(1)                                                                                                                                   | Browser→Pi: VIDEO=0x01, READY=0x02                                 |
-| CONFIG      | 0x05 | reserved(1) + turbo(1) + traction(1) + stability(1)                                                                                                     | Pi→Browser: turbo + traction + stability state                     |
+| CONFIG      | 0x05 | reserved(1) + turbo(1) + traction(1) + stability(1) + abs(1) + hill_hold(1) + coast(1) + surface(1)                                                     | Pi→Browser: all toggle states (11 bytes)                           |
 | KICK        | 0x06 | -                                                                                                                                                       | Pi→Browser: you have been kicked                                   |
 | TELEM       | 0x07 | race_time(4) + throttle(2) + steering(2) + lat(4) + lon(4) + speed(2) + gps_heading(2) + fix(1) + imu_heading(2) + cal(1) + yaw_rate(2) + wheel_dist(4) | Pi→Clients: telemetry + GPS + IMU + wheel (10Hz, 33 bytes)         |
 | TURBO       | 0x08 | turbo(1)                                                                                                                                                | Browser→Pi→ESP32: turbo mode toggle (0=off, 1=on)                  |
@@ -205,6 +213,11 @@ All secrets are externalized for open-source compatibility:
 | STABILITY   | 0x0A | stability(1)                                                                                                                                            | Browser→Pi: stability control toggle (0=off, 1=on)                 |
 | DEBUG_TELEM | 0x0B | TC(9) + YRC(10) + SAW(4) + SS(5)                                                                                                                        | Pi→Browser: debug telemetry for stability systems (10Hz, 31 bytes) |
 | HEADLIGHT   | 0x0C | headlight(1)                                                                                                                                            | Browser→Pi: headlight toggle via GPIO 26 (0=off, 1=on)             |
+| EXT_TELEM   | 0x0D | ABS(6) + HillHold(6) + Coast(3) + Surface(5)                                                                                                            | Pi→Browser: extended telemetry (23 bytes, 10Hz)                    |
+| ABS         | 0x0E | abs(1)                                                                                                                                                  | Browser→Pi: ABS toggle (0=off, 1=on)                               |
+| HILL_HOLD   | 0x0F | hill_hold(1)                                                                                                                                            | Browser→Pi: hill hold toggle (0=off, 1=on)                         |
+| COAST       | 0x10 | coast(1)                                                                                                                                                | Browser→Pi: coast control toggle (0=off, 1=on)                     |
+| SURFACE     | 0x11 | surface(1)                                                                                                                                              | Browser→Pi: surface adaptation toggle (0=off, 1=on)                |
 
 Packet format: `seq(uint16 LE) + cmd(uint8) + payload`
 

@@ -44,6 +44,10 @@ The system streams 720p @ 60fps video from a camera mounted on the car while you
 - **Turbo mode** (E key) — Boost from 30% → 65% forward throttle
 - **Traction control** (Q key) — IMU + wheel RPM slip detection with auto throttle limiting
 - **Stability control** (R key) — Yaw-rate based oversteer/understeer intervention
+- **ABS** (B key) — Anti-lock braking with ESC state machine for controlled stops
+- **Hill Hold** (G key) — Automatic brake hold on inclines with pitch detection
+- **Coast Control** (N key) — Throttle injection during coasting to prevent rollback
+- **Surface Adaptation** (F key) — Dynamic grip estimation for threshold adjustment
 - **Steering shaper** — Speed-based steering limits and counter-steer assist
 
 ### Telemetry
@@ -175,6 +179,10 @@ See [SETUP.md](SETUP.md) for detailed configuration instructions.
 | E                          | Toggle Turbo      |
 | Q                          | Toggle Traction   |
 | R                          | Toggle Stability  |
+| B                          | Toggle ABS        |
+| G                          | Toggle Hill Hold  |
+| N                          | Toggle Coast      |
+| F                          | Toggle Surface    |
 | H                          | Toggle Headlights |
 | C                          | Debug Overlay     |
 
@@ -227,7 +235,11 @@ arrma-remote/
 │   ├── control-relay.py     # WebRTC → UDP relay
 │   ├── bno055_reader.py     # IMU driver
 │   ├── hall_rpm.py          # Wheel RPM reader
-│   ├── traction_control.py  # Traction control system
+│   ├── low_speed_traction.py # Traction control (launch/cruise phases)
+│   ├── abs_controller.py    # ABS with ESC state machine
+│   ├── hill_hold.py         # Hill hold with pitch detection
+│   ├── coast_control.py     # Coast throttle injection
+│   ├── surface_adaptation.py # Dynamic grip estimation
 │   └── deploy.sh            # Quick deploy to Pi
 ├── restreamer/              # YouTube restreamer (Go/Fly.io)
 ├── generate-token.js        # Access token generator
