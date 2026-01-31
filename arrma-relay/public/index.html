@@ -1421,6 +1421,7 @@
 
 				<h2>📱 Controls</h2>
 				<ul>
+					<li><strong>Gamepad (Steam Deck/Xbox):</strong> RT=gas, LT=brake, Left stick=steer</li>
 					<li><strong>Mobile:</strong> Right stick steering, left trigger throttle</li>
 					<li><strong>Desktop:</strong> Arrow keys or WASD</li>
 				</ul>
@@ -1538,7 +1539,7 @@
 			</div>
 
 			<div id="instructions">
-				WASD / Arrow keys | E = Turbo | Q = TC | R = ESC | B = ABS | G = Hill | N = Coast | F = Surface | H = Light | C = Debug
+				🎮 Gamepad: RT=Gas LT=Brake LStick=Steer A/B/X/Y=Turbo/TC/ESC/ABS | ⌨️ WASD/Arrows | E=Turbo Q=TC R=ESC B=ABS G=Hill N=Coast F=Surface H=Light C=Debug
 			</div>
 
 			<!-- Control Buttons -->
@@ -1897,6 +1898,13 @@
 			const strStep = 1.0;
 			const strSmoothRate = 0.15; // How fast steering interpolates (0-1, lower = smoother)
 
+			// Gamepad state (Steam Deck / Xbox / PlayStation controllers)
+			let gamepadConnected = false;
+			let gamepadIndex = null;
+			const gamepadDeadzone = 0.1; // Ignore small stick/trigger movements
+			// Track previous button states for edge detection (toggle on press, not hold)
+			let prevGamepadButtons = {};
+
 			// Race state
 			let raceStartTime = null;
 			let raceTimerInterval = null;
@@ -2195,9 +2203,104 @@
 				}
 			}
 
+			// Gamepad polling - called every control loop iteration
+			// Steam Deck / Xbox layout:
+			//   RT (index 7) = throttle (forward)
+			//   LT (index 6) = brake/reverse
+			//   Left stick X (axis 0) = steering
+			//   A (0) = turbo, B (1) = traction, X (2) = stability, Y (3) = ABS
+			//   LB (4) = hill hold, RB (5) = coast, D-pad up (12) = surface, D-pad down (13) = headlight
+			function pollGamepad() {
+				const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+				let gp = null;
+
+				// Find the first connected gamepad
+				for (let i = 0; i < gamepads.length; i++) {
+					if (gamepads[i] && gamepads[i].connected) {
+						gp = gamepads[i];
+						if (gamepadIndex !== i) {
+							gamepadIndex = i;
+							gamepadConnected = true;
+							console.log('Gamepad connected:', gp.id);
+						}
+						break;
+					}
+				}
+
+				if (!gp) {
+					if (gamepadConnected) {
+						gamepadConnected = false;
+						gamepadIndex = null;
+						console.log('Gamepad disconnected');
+					}
+					return false; // No gamepad input
+				}
+
+				// Read triggers for throttle
+				// RT (index 7) = forward throttle (0 to 1)
+				// LT (index 6) = reverse/brake (0 to 1)
+				const rt = gp.buttons[7] ? gp.buttons[7].value : 0;
+				const lt = gp.buttons[6] ? gp.buttons[6].value : 0;
+
+				// Calculate throttle: RT pushes forward, LT pushes backward
+				let gpThrottle = rt - lt;
+
+				// Apply deadzone
+				if (Math.abs(gpThrottle) < gamepadDeadzone) gpThrottle = 0;
+
+				// Read left stick X axis for steering (axis 0)
+				// Positive = right, Negative = left
+				let gpSteering = gp.axes[0] || 0;
+
+				// Apply deadzone to steering
+				if (Math.abs(gpSteering) < gamepadDeadzone) gpSteering = 0;
+
+				// Check if gamepad has meaningful input
+				const hasInput = Math.abs(gpThrottle) > 0 || Math.abs(gpSteering) > 0;
+
+				if (hasInput) {
+					// Update throttle and steering from gamepad
+					thrSlider = gpThrottle;
+					thr = gpThrottle;
+					str = gpSteering;
+					strTarget = gpSteering; // Keep strTarget in sync for keyboard/gamepad switching
+				}
+
+				// Handle button presses for feature toggles (edge detection - only on press)
+				const buttonMappings = [
+					{ index: 0, action: toggleTurbo },      // A = Turbo
+					{ index: 1, action: toggleTraction },   // B = Traction Control
+					{ index: 2, action: toggleStability },  // X = Stability/ESC
+					{ index: 3, action: toggleAbs },        // Y = ABS
+					{ index: 4, action: toggleHillHold },   // LB = Hill Hold
+					{ index: 5, action: toggleCoast },      // RB = Coast Control
+					{ index: 12, action: toggleSurface },   // D-pad Up = Surface Adaptation
+					{ index: 13, action: toggleHeadlight }, // D-pad Down = Headlight
+					{ index: 9, action: toggleDebugOverlay }, // Start/Menu = Debug Overlay
+				];
+
+				for (const mapping of buttonMappings) {
+					const btn = gp.buttons[mapping.index];
+					if (btn) {
+						const pressed = btn.pressed || btn.value > 0.5;
+						const wasPressed = prevGamepadButtons[mapping.index] || false;
+						// Trigger on rising edge (button just pressed)
+						if (pressed && !wasPressed) {
+							mapping.action();
+						}
+						prevGamepadButtons[mapping.index] = pressed;
+					}
+				}
+
+				return hasInput;
+			}
+
 			function sendControl() {
-				// Smooth keyboard steering interpolation (only when using keyboard)
-				if (keys.size > 0 || str !== strTarget) {
+				// Poll gamepad for input
+				const gamepadActive = pollGamepad();
+
+				// Smooth keyboard steering interpolation (only when using keyboard, not gamepad)
+				if (!gamepadActive && (keys.size > 0 || str !== strTarget)) {
 					str += (strTarget - str) * strSmoothRate;
 					// Snap to target when very close
 					if (Math.abs(str - strTarget) < 0.01) str = strTarget;
@@ -4238,6 +4341,22 @@
 					str = 0;
 					strTarget = 0;
 					if (isConnected) sendControl();
+				}
+			});
+
+			// Gamepad connect/disconnect event listeners
+			window.addEventListener('gamepadconnected', (e) => {
+				console.log('Gamepad connected event:', e.gamepad.id);
+				gamepadIndex = e.gamepad.index;
+				gamepadConnected = true;
+			});
+
+			window.addEventListener('gamepaddisconnected', (e) => {
+				console.log('Gamepad disconnected event:', e.gamepad.id);
+				if (gamepadIndex === e.gamepad.index) {
+					gamepadIndex = null;
+					gamepadConnected = false;
+					prevGamepadButtons = {};
 				}
 			});
 

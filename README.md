@@ -36,6 +36,7 @@ The system streams 720p @ 60fps video from a camera mounted on the car while you
 
 - **Low-latency control** — ~30-100ms over internet, ~10-15ms on LAN
 - **Live FPV video** — 720p @ 60fps H.264 streaming
+- **Gamepad support** — Steam Deck, Xbox, PlayStation controllers via Gamepad API
 - **Touch & keyboard controls** — Works on mobile and desktop
 - **Auto-reconnect** — Handles connection drops gracefully
 
@@ -168,10 +169,27 @@ See [SETUP.md](SETUP.md) for detailed configuration instructions.
 
 ### Controls
 
+#### Gamepad (Steam Deck / Xbox / PlayStation)
+
 | Input                      | Action            |
 | -------------------------- | ----------------- |
-| Left zone drag up/down     | Throttle          |
-| Right zone drag left/right | Steering          |
+| Right Trigger (RT/R2)      | Throttle/Forward  |
+| Left Trigger (LT/L2)       | Brake/Reverse     |
+| Left Stick (horizontal)    | Steering          |
+| A (Xbox) / X (PS)          | Toggle Turbo      |
+| B (Xbox) / O (PS)          | Toggle Traction   |
+| X (Xbox) / □ (PS)          | Toggle Stability  |
+| Y (Xbox) / △ (PS)          | Toggle ABS        |
+| LB/L1                      | Toggle Hill Hold  |
+| RB/R1                      | Toggle Coast      |
+| D-pad Up                   | Toggle Surface    |
+| D-pad Down                 | Toggle Headlights |
+| Start/Menu                 | Debug Overlay     |
+
+#### Keyboard
+
+| Input                      | Action            |
+| -------------------------- | ----------------- |
 | W / ↑                      | Forward           |
 | S / ↓                      | Reverse           |
 | A / ←                      | Steer left        |
@@ -185,6 +203,13 @@ See [SETUP.md](SETUP.md) for detailed configuration instructions.
 | F                          | Toggle Surface    |
 | H                          | Toggle Headlights |
 | C                          | Debug Overlay     |
+
+#### Touch (Mobile)
+
+| Input                      | Action            |
+| -------------------------- | ----------------- |
+| Left zone drag up/down     | Throttle          |
+| Right zone drag left/right | Steering          |
 
 ### Admin Dashboard
 
