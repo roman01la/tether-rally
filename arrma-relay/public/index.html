@@ -1921,7 +1921,7 @@
 				coast: { active: false, injection: 0 },
 				// Surface Adaptation
 				surface: { grip: 70, multiplier: 100, measuring: false },
-				// WiFi Signal (from ESP32)
+				// WiFi Signal (from Pi: RSSI for WiFi, LQ for internet)
 				wifi: { rssi: 0, linkQuality: 0 },
 			};
 
@@ -3182,10 +3182,10 @@
 				extendedTelem.surface.multiplier = view.getUint16(20, true) / 100;
 				extendedTelem.surface.measuring = view.getUint8(22) === 1;
 
-				// WiFi Signal (offset 23-24) - only parse if packet is long enough
+				// WiFi Signal (offset 23-24) - Pi's WiFi RSSI and internet/WiFi link quality
 				if (view.byteLength >= 25) {
-					extendedTelem.wifi.rssi = view.getInt8(23); // Signed byte: -128 to 0 dBm
-					extendedTelem.wifi.linkQuality = view.getUint8(24); // 0-100%
+					extendedTelem.wifi.rssi = view.getInt8(23); // Pi WiFi RSSI: -128 to 0 dBm
+					extendedTelem.wifi.linkQuality = view.getUint8(24); // Internet LQ (or WiFi LQ fallback): 0-100%
 					updateWifiIndicator();
 				}
 

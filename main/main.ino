@@ -254,13 +254,9 @@ void handlePacket(uint8_t *data, size_t len)
 
 void sendBeacon()
 {
-  // Broadcast beacon on beacon port for Pi discovery
-  // Format: "ARRMA" (5 bytes) + RSSI (1 byte, signed)
-  int8_t rssi = WiFi.RSSI();  // WiFi signal strength in dBm (-100 to 0 typical)
-  
+  // Broadcast "ARRMA" on beacon port for Pi discovery
   udp.beginPacket(IPAddress(255, 255, 255, 255), BEACON_PORT);
   udp.write((uint8_t *)"ARRMA", 5);
-  udp.write((uint8_t *)&rssi, 1);  // Append RSSI as signed byte
   udp.endPacket();
 }
 

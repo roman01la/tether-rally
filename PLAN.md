@@ -466,7 +466,7 @@ pi-scripts/
 - Direct P2P connection (10-15ms RTT vs 100-200ms with WS relay)
 - Token validation with HMAC-SHA256 on Pi
 - DataChannel: `ordered: false, maxRetransmits: 0` (UDP-like)
-- ESP32 beacon discovery (broadcasts "ARRMA" + RSSI on UDP 4211, 1Hz)
+- ESP32 beacon discovery (broadcasts "ARRMA" on UDP 4211)
 - No Durable Objects needed (stateless Worker)
 
 **ESP32 changes (main.ino):**
@@ -475,7 +475,7 @@ pi-scripts/
 - FreeRTOS dual-core: UDP receive (Core 0), Control loop (Core 1)
 - 200 Hz output with EMA smoothing + slew rate limiting
 - Staged timeout: 80ms hold → 250ms neutral
-- Beacon broadcast for Pi discovery (includes WiFi RSSI)
+- Beacon broadcast for Pi discovery
 
 **Pi relay (control-relay.py):**
 
@@ -483,6 +483,7 @@ pi-scripts/
 - Forwards binary packets to ESP32 via UDP
 - Forwards PONG from ESP32 back to browser (latency = browser↔ESP32)
 - Runs as systemd service with FIFO scheduling
+- WiFi signal monitoring (Pi's RSSI + internet link quality via ping)
 
 **Deployment:** See [SETUP.md](SETUP.md) for detailed deployment instructions.
 

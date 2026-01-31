@@ -23,7 +23,9 @@ import time
 import logging
 import os
 import math
+import re
 import serial
+import subprocess
 import pynmea2
 import RPi.GPIO as GPIO
 from aiohttp import web
@@ -51,7 +53,11 @@ logger = logging.getLogger(__name__)
 ESP32_IP = None
 ESP32_PORT = 4210
 BEACON_PORT = 4211
-ESP32_RSSI = 0  # WiFi signal strength from ESP32 beacon (dBm, -100 to 0)
+
+# Pi WiFi signal monitoring
+PI_WIFI_RSSI = 0  # WiFi signal strength from Pi's interface (dBm, -100 to 0)
+PI_WIFI_LQ = 0    # WiFi link quality (0-100%)
+INTERNET_LQ = -1  # Internet connection quality based on ping (0-100%), -1 = not measured yet
 
 # Control relay HTTP port (exposed via Cloudflare Tunnel)
 HTTP_PORT = 8890
@@ -205,6 +211,89 @@ countdown_task = None  # Asyncio task for countdown timer
 
 turbo_mode = False     # Turbo mode: increases limits (ESP32 enforces hard limits)
 headlight_on = False   # Headlight state (controlled via GPIO 26)
+
+# ----- WiFi and Internet Quality Monitoring -----
+
+# Sentinel value to indicate internet quality has not been measured yet
+INTERNET_LQ_NOT_MEASURED = -1
+
+def get_wifi_signal():
+    """Get WiFi signal strength and link quality from Pi's wireless interface.
+    Updates global PI_WIFI_RSSI and PI_WIFI_LQ.
+    """
+    global PI_WIFI_RSSI, PI_WIFI_LQ
+    try:
+        # Use iwconfig to get wireless stats (works on most Linux systems)
+        result = subprocess.run(
+            ['iwconfig', 'wlan0'],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        output = result.stdout
+        
+        for line in output.split('\n'):
+            if 'Link Quality' in line:
+                # Format: "Link Quality=XX/YY  Signal level=-XX dBm"
+                lq_pattern = r'Link Quality[=:](\d+)/(\d+)'
+                match = re.search(lq_pattern, line)
+                if match:
+                    current = int(match.group(1))
+                    maximum = int(match.group(2))
+                    PI_WIFI_LQ = int((current / maximum) * 100) if maximum > 0 else 0
+                
+                # Also try to get signal level
+                signal_pattern = r'Signal level[=:](-?\d+)\s*dBm'
+                match = re.search(signal_pattern, line)
+                if match:
+                    PI_WIFI_RSSI = int(match.group(1))
+    except Exception as e:
+        logger.debug(f"Error getting WiFi signal: {e}")
+
+def get_internet_quality():
+    """Get internet connection quality by measuring ping latency.
+    Updates global INTERNET_LQ.
+    100% = <20ms, 0% = >500ms or failed
+    """
+    global INTERNET_LQ
+    try:
+        # Ping a reliable server (Cloudflare DNS) with 1 packet, 1 second timeout
+        result = subprocess.run(
+            ['ping', '-c', '1', '-W', '1', '1.1.1.1'],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        
+        if result.returncode == 0:
+            # Parse latency from output (e.g., "time=12.3 ms")
+            match = re.search(r'time=(\d+\.?\d*)\s*ms', result.stdout)
+            if match:
+                latency_ms = float(match.group(1))
+                # Convert latency to quality: 20ms=100%, 500ms=0%
+                if latency_ms <= 20:
+                    INTERNET_LQ = 100
+                elif latency_ms >= 500:
+                    INTERNET_LQ = 0
+                else:
+                    INTERNET_LQ = int(100 - ((latency_ms - 20) / 4.8))
+            else:
+                INTERNET_LQ = 0
+        else:
+            INTERNET_LQ = 0
+    except Exception as e:
+        logger.debug(f"Error checking internet quality: {e}")
+        INTERNET_LQ = 0
+
+async def wifi_monitor_loop():
+    """Background task to monitor WiFi and internet quality at 1Hz"""
+    while True:
+        try:
+            get_wifi_signal()
+            get_internet_quality()
+        except Exception as e:
+            logger.warning(f"WiFi monitor error: {e}")
+        await asyncio.sleep(1)  # Update every 1 second
 
 # Revoked tokens (persisted to file, keeps last 10)
 REVOKED_TOKENS_FILE = '/home/pi/revoked_tokens.txt'
@@ -480,13 +569,13 @@ def broadcast_extended_telemetry():
         surf_multiplier = int(max(0, min(500, status['threshold_multiplier'])) * 100)
         surf_measuring = 1 if (surface_adapt_enabled and status['measurement_active']) else 0
     
-    # WiFi Signal: rssi(1), link_quality(1) = 2 bytes
-    # RSSI: signal strength in dBm (typically -100 to 0, clamped to -128 to 0)
-    # Link Quality: percentage 0-100% derived from RSSI using linear mapping
-    # Note: ESP32_RSSI is 0 before first beacon is received
-    wifi_rssi = max(-128, min(0, ESP32_RSSI))  # Clamp to signed byte range
-    # Convert RSSI to link quality percentage: -100dBm=0%, -50dBm=100%
-    wifi_lq = max(0, min(100, int((ESP32_RSSI + 100) * 2)))  # Linear mapping
+    # WiFi/Internet Signal: rssi(1), link_quality(1) = 2 bytes
+    # RSSI: Pi's WiFi signal strength in dBm (-100 to 0, clamped to -128 to 0)
+    # Link Quality: Internet connection quality (0-100%) based on ping latency
+    wifi_rssi = max(-128, min(0, PI_WIFI_RSSI))  # Clamp to signed byte range
+    # Use internet LQ if measured (>= 0), otherwise fall back to WiFi LQ
+    # INTERNET_LQ starts at -1 (not measured) and becomes 0-100 after first ping
+    wifi_lq = INTERNET_LQ if INTERNET_LQ >= 0 else PI_WIFI_LQ
     
     # Pack extended telemetry
     # Format: seq(2) + cmd(1) + 
@@ -1029,7 +1118,7 @@ def forward_to_esp32(message: bytes):
 
 async def discover_esp32():
     """Listen for ESP32 beacon broadcasts"""
-    global ESP32_IP, ESP32_RSSI
+    global ESP32_IP
     
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1044,18 +1133,11 @@ async def discover_esp32():
     while True:
         try:
             data, addr = await loop.sock_recvfrom(sock, 1024)
-            # Beacon format: "ARRMA" (5 bytes) + optional RSSI (1 byte, signed)
-            if len(data) >= 5 and data[:5] == b'ARRMA':
+            if data == b'ARRMA':
                 new_ip = addr[0]
                 if ESP32_IP != new_ip:
                     ESP32_IP = new_ip
                     logger.info(f"Discovered ESP32 at {ESP32_IP}")
-                
-                # Parse RSSI if present (6 byte beacon)
-                if len(data) >= 6:
-                    # RSSI is a signed byte (-100 to 0 dBm typical)
-                    rssi_byte = data[5]
-                    ESP32_RSSI = rssi_byte if rssi_byte < 128 else rssi_byte - 256
         except BlockingIOError:
             await asyncio.sleep(0.1)
         except Exception as e:
@@ -1800,6 +1882,9 @@ async def main():
     
     # Start IMU (BNO055) reader loop
     imu_task = asyncio.create_task(imu_reader_loop())
+    
+    # Start WiFi/Internet quality monitor loop (1Hz)
+    wifi_task = asyncio.create_task(wifi_monitor_loop())
     
     # Start telemetry broadcast loop (10Hz)
     telemetry_task = asyncio.create_task(telemetry_broadcast_loop())
