@@ -1,280 +1,313 @@
-/**
- * Native WebRTC Viewer - Viewer Implementation
- *
- * Main viewer class implementation for macOS.
- * Uses VideoToolbox for hardware H.264 decoding.
- */
-
 #include "viewer.h"
-#include "whep_client.h"
+#include "stream_decoder.h"
 #include "renderer.h"
+#include "control_channel.h"
 
 #include <GLFW/glfw3.h>
-
-#include <chrono>
 #include <iostream>
-#include <thread>
-
-namespace native_viewer {
+#include <sstream>
+#include <iomanip>
 
 Viewer::Viewer() = default;
 
-Viewer::~Viewer() {
+Viewer::~Viewer()
+{
     stop();
-    
+
+    controlChannel_.reset();
     renderer_.reset();
-    whep_client_.reset();
-    
-    if (window_) {
+    decoder_.reset();
+
+    if (window_)
+    {
         glfwDestroyWindow(window_);
         window_ = nullptr;
     }
-    
     glfwTerminate();
 }
 
-void Viewer::errorCallback(int error, const char* description) {
-    std::cerr << "GLFW Error " << error << ": " << description << "\n";
-}
-
-void Viewer::keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    (void)scancode;
-    (void)mods;
-    
-    if (action != GLFW_PRESS) {
-        return;
-    }
-    
-    Viewer* viewer = static_cast<Viewer*>(glfwGetWindowUserPointer(window));
-    if (!viewer) {
-        return;
-    }
-    
-    switch (key) {
-        case GLFW_KEY_ESCAPE:
-            viewer->stop();
-            break;
-        case GLFW_KEY_F:
-            viewer->toggleFullscreen();
-            break;
-        case GLFW_KEY_S:
-            viewer->toggleStatsOverlay();
-            break;
-        default:
-            break;
-    }
-}
-
-void Viewer::framebufferSizeCallback(GLFWwindow* window, int width, int height) {
-    Viewer* viewer = static_cast<Viewer*>(glfwGetWindowUserPointer(window));
-    if (viewer) {
-        viewer->fb_width_ = width;
-        viewer->fb_height_ = height;
-        if (viewer->renderer_) {
-            viewer->renderer_->resize(width, height);
-        }
-    }
-}
-
-bool Viewer::initialize(const ViewerConfig& config) {
+bool Viewer::initialize(const ViewerConfig &config)
+{
     config_ = config;
-    
-    if (!initWindow()) {
+
+    if (!initWindow())
+    {
         return false;
     }
-    
-    // Create renderer
-    renderer_ = std::make_unique<Renderer>();
-    if (!renderer_->initialize(fb_width_, fb_height_)) {
-        std::cerr << "Failed to initialize renderer\n";
+
+    if (!initDecoder())
+    {
         return false;
     }
-    
-    // Create WHEP client
-    whep_client_ = std::make_unique<WHEPClient>();
-    
-    WHEPConfig whep_config{};
-    whep_config.whep_url = config_.whep_url;
-    whep_config.turn_url = config_.turn_url;
-    whep_config.turn_user = config_.turn_user;
-    whep_config.turn_pass = config_.turn_pass;
-    
-    // Set frame callback - this is called when a new frame is decoded
-    whep_client_->setFrameCallback([this](const VideoFrame& frame) {
-        if (renderer_) {
-            renderer_->submitFrame(frame);
+
+    // Initialize control channel if URL and token provided
+    if (!config_.control_url.empty() && !config_.token.empty())
+    {
+        controlChannel_ = std::make_unique<ControlChannel>();
+        controlChannel_->setLatencyCallback([this](double latency)
+                                            { controlLatency_ = latency; });
+
+        std::cout << "Connecting control channel to: " << config_.control_url << std::endl;
+        if (!controlChannel_->connect(config_.control_url, config_.token, config_.turn_credentials_url))
+        {
+            std::cerr << "Warning: Failed to connect control channel" << std::endl;
+            // Continue anyway - video still works
         }
-        stats_.frames_decoded++;
-        stats_.video_width = frame.width;
-        stats_.video_height = frame.height;
-    });
-    
-    // Set connection callback
-    whep_client_->setConnectionCallback([this](bool connected) {
-        stats_.connected = connected;
-        if (connected) {
-            std::cout << "WebRTC connected!\n";
-        } else {
-            std::cout << "WebRTC disconnected\n";
-        }
-    });
-    
-    if (!whep_client_->initialize(whep_config)) {
-        std::cerr << "Failed to initialize WHEP client\n";
-        return false;
     }
-    
+
     return true;
 }
 
-bool Viewer::initWindow() {
-    glfwSetErrorCallback(errorCallback);
-    
-    if (!glfwInit()) {
-        std::cerr << "Failed to initialize GLFW\n";
+bool Viewer::initWindow()
+{
+    if (!glfwInit())
+    {
+        std::cerr << "Failed to initialize GLFW" << std::endl;
         return false;
     }
-    
-    // OpenGL 3.3 Core Profile (compatible with macOS)
+
+    // OpenGL hints
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);  // Required on macOS
-    
-    // For low latency rendering
-    glfwWindowHint(GLFW_DOUBLEBUFFER, GLFW_TRUE);
-    
-    GLFWmonitor* monitor = nullptr;
-    int width = config_.window_width;
-    int height = config_.window_height;
-    
-    if (config_.fullscreen) {
-        monitor = glfwGetPrimaryMonitor();
-        const GLFWvidmode* mode = glfwGetVideoMode(monitor);
-        width = mode->width;
-        height = mode->height;
-    }
-    
-    window_ = glfwCreateWindow(width, height, "Tether Rally - Native Viewer", monitor, nullptr);
-    if (!window_) {
-        std::cerr << "Failed to create GLFW window\n";
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
+
+    // Create window
+    window_ = glfwCreateWindow(config_.window_width, config_.window_height,
+                               "ARRMA Viewer", nullptr, nullptr);
+    if (!window_)
+    {
+        std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
         return false;
     }
-    
+
+    // Store initial window position/size for fullscreen toggle
+    glfwGetWindowPos(window_, &windowedX_, &windowedY_);
+    windowedWidth_ = config_.window_width;
+    windowedHeight_ = config_.window_height;
+
+    // Set callbacks
     glfwSetWindowUserPointer(window_, this);
     glfwSetKeyCallback(window_, keyCallback);
     glfwSetFramebufferSizeCallback(window_, framebufferSizeCallback);
-    
+
+    // Make context current
     glfwMakeContextCurrent(window_);
-    
-    // Disable vsync for lowest latency (may cause tearing)
-    // Set to 1 for vsync enabled
+
+    // Disable vsync for lowest latency
     glfwSwapInterval(0);
-    
-    glfwGetFramebufferSize(window_, &fb_width_, &fb_height_);
-    
-    std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << "\n";
-    std::cout << "OpenGL Renderer: " << glGetString(GL_RENDERER) << "\n";
-    
+
+    // Create renderer
+    renderer_ = std::make_unique<Renderer>();
+    if (!renderer_->initialize())
+    {
+        std::cerr << "Failed to initialize renderer" << std::endl;
+        return false;
+    }
+
     return true;
 }
 
-bool Viewer::initWebRTC() {
-    return whep_client_->connect();
+bool Viewer::initDecoder()
+{
+    decoder_ = std::make_unique<StreamDecoder>();
+
+    std::cout << "Connecting to: " << config_.stream_url << std::endl;
+
+    if (!decoder_->connect(config_.stream_url))
+    {
+        std::cerr << "Failed to connect to stream" << std::endl;
+        return false;
+    }
+
+    // Resize renderer to match video
+    int w = decoder_->getWidth();
+    int h = decoder_->getHeight();
+    if (w > 0 && h > 0)
+    {
+        renderer_->resize(w, h);
+    }
+
+    return true;
 }
 
-int Viewer::run() {
+int Viewer::run()
+{
     running_ = true;
-    
-    // Start WebRTC connection
-    if (!initWebRTC()) {
-        std::cerr << "Failed to start WebRTC connection\n";
-        return 1;
-    }
-    
-    auto last_time = std::chrono::steady_clock::now();
-    int frame_count = 0;
-    
-    while (running_ && !glfwWindowShouldClose(window_)) {
+    lastFpsTime_ = glfwGetTime();
+    lastFpsFrameCount_ = 0;
+
+    // Start decoder with frame callback
+    decoder_->start([this](const uint8_t *data, int w, int h)
+                    { onFrame(data, w, h); });
+
+    // Main loop
+    while (running_ && !glfwWindowShouldClose(window_))
+    {
         glfwPollEvents();
-        
-        // Process WebRTC events
-        whep_client_->poll();
-        
-        // Render
         renderFrame();
-        
-        // Swap buffers
         glfwSwapBuffers(window_);
-        
-        // Update FPS counter
-        frame_count++;
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
-        if (elapsed >= 1000) {
-            stats_.framerate = frame_count;
-            frame_count = 0;
-            last_time = now;
-            updateStats();
+
+        // Update FPS and window title every second
+        double currentTime = glfwGetTime();
+        if (currentTime - lastFpsTime_ >= 1.0)
+        {
+            int framesDelta = framesDecoded_ - lastFpsFrameCount_;
+            actualFps_ = framesDelta / (currentTime - lastFpsTime_);
+            lastFpsFrameCount_ = framesDecoded_;
+            lastFpsTime_ = currentTime;
+
+            // Update window title with stats
+            if (showStats_)
+            {
+                std::ostringstream title;
+                title << "ARRMA Viewer - "
+                      << decoder_->getWidth() << "x" << decoder_->getHeight()
+                      << " @ " << std::fixed << std::setprecision(0) << actualFps_ << " fps";
+
+                // Add control latency if connected
+                double latency = controlLatency_.load();
+                if (latency > 0)
+                {
+                    // Video latency = control RTT/2 + 120ms baseline (same as web app)
+                    constexpr double MINIMAL_VIDEO_LATENCY = 120.0;
+                    double videoLatency = latency + MINIMAL_VIDEO_LATENCY;
+                    title << " • " << std::setprecision(0) << videoLatency << "ms";
+                }
+
+                glfwSetWindowTitle(window_, title.str().c_str());
+            }
+            else
+            {
+                glfwSetWindowTitle(window_, "ARRMA Viewer");
+            }
         }
     }
-    
+
+    decoder_->stop();
     return 0;
 }
 
-void Viewer::renderFrame() {
-    glViewport(0, 0, fb_width_, fb_height_);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    
-    if (renderer_) {
-        renderer_->render();
-        
-        if (show_stats_) {
-            renderer_->renderStats(stats_);
+void Viewer::stop()
+{
+    running_ = false;
+}
+
+void Viewer::onFrame(const uint8_t *data, int width, int height)
+{
+    std::lock_guard<std::mutex> lock(frameMutex_);
+
+    size_t size = width * height * 3;
+    if (frameData_.size() != size)
+    {
+        frameData_.resize(size);
+    }
+
+    memcpy(frameData_.data(), data, size);
+    frameWidth_ = width;
+    frameHeight_ = height;
+    newFrame_ = true;
+    framesDecoded_++;
+}
+
+void Viewer::renderFrame()
+{
+    // Check for new frame
+    {
+        std::lock_guard<std::mutex> lock(frameMutex_);
+        if (newFrame_)
+        {
+            renderer_->uploadFrame(frameData_.data(), frameWidth_, frameHeight_);
+            newFrame_ = false;
         }
     }
+
+    // Render
+    int fbWidth, fbHeight;
+    glfwGetFramebufferSize(window_, &fbWidth, &fbHeight);
+    renderer_->render(fbWidth, fbHeight);
 }
 
-void Viewer::updateStats() {
-    if (whep_client_) {
-        auto client_stats = whep_client_->getStats();
-        stats_.rtt_ms = client_stats.rtt_ms;
-        stats_.bitrate_kbps = client_stats.bitrate_kbps;
+ViewerStats Viewer::getStats() const
+{
+    ViewerStats stats;
+    if (decoder_)
+    {
+        stats.video_width = decoder_->getWidth();
+        stats.video_height = decoder_->getHeight();
+        stats.framerate = decoder_->getFPS();
+        stats.connected = decoder_->isConnected();
+    }
+    stats.frames_decoded = framesDecoded_;
+    stats.actual_fps = actualFps_;
+    stats.control_latency = controlLatency_;
+    stats.control_connected = controlChannel_ && controlChannel_->isConnected();
+    return stats;
+}
+
+void Viewer::toggleFullscreen()
+{
+    if (!window_)
+        return;
+
+    if (isFullscreen_)
+    {
+        // Restore windowed mode
+        glfwSetWindowMonitor(window_, nullptr,
+                             windowedX_, windowedY_,
+                             windowedWidth_, windowedHeight_, 0);
+        isFullscreen_ = false;
+    }
+    else
+    {
+        // Save windowed position/size
+        glfwGetWindowPos(window_, &windowedX_, &windowedY_);
+        glfwGetWindowSize(window_, &windowedWidth_, &windowedHeight_);
+
+        // Switch to fullscreen
+        GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+        const GLFWvidmode *mode = glfwGetVideoMode(monitor);
+        glfwSetWindowMonitor(window_, monitor, 0, 0,
+                             mode->width, mode->height, mode->refreshRate);
+        isFullscreen_ = true;
     }
 }
 
-void Viewer::stop() {
-    running_ = false;
-    if (whep_client_) {
-        whep_client_->disconnect();
+void Viewer::toggleStatsOverlay()
+{
+    showStats_ = !showStats_;
+}
+
+void Viewer::keyCallback(GLFWwindow *window, int key, int scancode,
+                         int action, int mods)
+{
+    if (action != GLFW_PRESS)
+        return;
+
+    Viewer *viewer = static_cast<Viewer *>(glfwGetWindowUserPointer(window));
+    if (!viewer)
+        return;
+
+    switch (key)
+    {
+    case GLFW_KEY_ESCAPE:
+    case GLFW_KEY_Q:
+        viewer->stop();
+        break;
+    case GLFW_KEY_F:
+    case GLFW_KEY_F11:
+        viewer->toggleFullscreen();
+        break;
+    case GLFW_KEY_S:
+        viewer->toggleStatsOverlay();
+        break;
     }
 }
 
-ViewerStats Viewer::getStats() const {
-    return stats_;
+void Viewer::framebufferSizeCallback(GLFWwindow *window, int width, int height)
+{
+    glViewport(0, 0, width, height);
 }
-
-void Viewer::toggleFullscreen() {
-    if (glfwGetWindowMonitor(window_)) {
-        // Currently fullscreen, switch to windowed
-        glfwSetWindowMonitor(window_, nullptr, 
-                            windowed_x_, windowed_y_,
-                            windowed_width_, windowed_height_, 0);
-    } else {
-        // Currently windowed, switch to fullscreen
-        glfwGetWindowPos(window_, &windowed_x_, &windowed_y_);
-        glfwGetWindowSize(window_, &windowed_width_, &windowed_height_);
-        
-        GLFWmonitor* monitor = glfwGetPrimaryMonitor();
-        const GLFWvidmode* mode = glfwGetVideoMode(monitor);
-        glfwSetWindowMonitor(window_, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
-    }
-}
-
-void Viewer::toggleStatsOverlay() {
-    show_stats_ = !show_stats_;
-}
-
-} // namespace native_viewer

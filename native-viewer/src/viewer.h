@@ -1,141 +1,143 @@
 /**
- * Native WebRTC Viewer - Viewer Header
+ * Native Viewer - Viewer Header
  *
- * Main viewer class that orchestrates GLFW window, WebRTC connection,
- * and video rendering.
+ * Main viewer class that orchestrates GLFW window, RTSP stream decoding,
+ * and video rendering with minimal latency.
  */
 
-#ifndef NATIVE_VIEWER_VIEWER_H
-#define NATIVE_VIEWER_VIEWER_H
+#pragma once
 
 #include <memory>
 #include <string>
 #include <atomic>
+#include <mutex>
+#include <vector>
 
-// Forward declarations
 struct GLFWwindow;
 
-namespace native_viewer {
-
-// Forward declarations
-class WHEPClient;
+class StreamDecoder;
 class Renderer;
+class ControlChannel;
 
 /**
  * Configuration for the viewer
  */
-struct ViewerConfig {
-    std::string whep_url;          // WHEP endpoint URL
-    std::string turn_url;          // Optional TURN server URL
-    std::string turn_user;         // TURN username
-    std::string turn_pass;         // TURN password
-    int window_width = 1280;       // Window width
-    int window_height = 720;       // Window height
-    bool fullscreen = false;       // Start fullscreen
+struct ViewerConfig
+{
+    std::string stream_url;           // RTSP stream URL
+    std::string control_url;          // Control relay URL
+    std::string turn_credentials_url; // TURN credentials URL (optional)
+    std::string token;                // Authentication token
+    int window_width = 1280;          // Window width
+    int window_height = 720;          // Window height
+    bool fullscreen = false;          // Start fullscreen
 };
 
 /**
  * Statistics for display
  */
-struct ViewerStats {
+struct ViewerStats
+{
     int video_width = 0;
     int video_height = 0;
-    int framerate = 0;
-    int bitrate_kbps = 0;
-    int rtt_ms = 0;
+    double framerate = 0;
     int frames_decoded = 0;
-    int frames_dropped = 0;
+    double actual_fps = 0;
+    double control_latency = 0; // Control channel latency in ms
     bool connected = false;
+    bool control_connected = false;
 };
 
 /**
  * Main viewer class
- *
- * Manages the GLFW window, WebRTC connection via WHEP,
- * and renders video frames with minimal latency.
  */
-class Viewer {
+class Viewer
+{
 public:
     Viewer();
     ~Viewer();
-    
+
     // Non-copyable
-    Viewer(const Viewer&) = delete;
-    Viewer& operator=(const Viewer&) = delete;
-    
+    Viewer(const Viewer &) = delete;
+    Viewer &operator=(const Viewer &) = delete;
+
     /**
      * Initialize the viewer with the given configuration
-     * @param config Viewer configuration
-     * @return true on success
      */
-    bool initialize(const ViewerConfig& config);
-    
+    bool initialize(const ViewerConfig &config);
+
     /**
      * Run the main loop (blocks until window closes)
-     * @return Exit code (0 = success)
      */
     int run();
-    
+
     /**
      * Request the viewer to stop
      */
     void stop();
-    
+
     /**
      * Get current statistics
      */
     ViewerStats getStats() const;
-    
+
     /**
      * Toggle fullscreen mode
      */
     void toggleFullscreen();
-    
+
     /**
      * Toggle stats overlay
      */
     void toggleStatsOverlay();
-    
+
 private:
     // GLFW callbacks
-    static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
-    static void framebufferSizeCallback(GLFWwindow* window, int width, int height);
-    static void errorCallback(int error, const char* description);
-    
-    // Internal methods
+    static void keyCallback(GLFWwindow *window, int key, int scancode,
+                            int action, int mods);
+    static void framebufferSizeCallback(GLFWwindow *window, int width, int height);
+
+    // Frame callback from decoder
+    void onFrame(const uint8_t *data, int width, int height);
+
+    // Initialization helpers
     bool initWindow();
-    bool initWebRTC();
+    bool initDecoder();
+
+    // Rendering
     void renderFrame();
-    void updateStats();
-    
+
     // Configuration
     ViewerConfig config_;
-    
-    // Window
-    GLFWwindow* window_ = nullptr;
-    int fb_width_ = 0;
-    int fb_height_ = 0;
-    bool show_stats_ = false;
-    
-    // Windowed mode state (for fullscreen toggle)
-    int windowed_x_ = 0;
-    int windowed_y_ = 0;
-    int windowed_width_ = 0;
-    int windowed_height_ = 0;
-    
+
+    // GLFW window
+    GLFWwindow *window_ = nullptr;
+    int windowedX_ = 0;
+    int windowedY_ = 0;
+    int windowedWidth_ = 0;
+    int windowedHeight_ = 0;
+    bool isFullscreen_ = false;
+
     // Components
-    std::unique_ptr<WHEPClient> whep_client_;
+    std::unique_ptr<StreamDecoder> decoder_;
     std::unique_ptr<Renderer> renderer_;
-    
+    std::unique_ptr<ControlChannel> controlChannel_;
+
     // State
     std::atomic<bool> running_{false};
-    ViewerStats stats_;
-    
-    // For stats calculation
-    int64_t last_stats_time_ = 0;
-    int last_frame_count_ = 0;
+    std::atomic<bool> showStats_{false};
+    std::atomic<int> framesDecoded_{0};
+    std::atomic<double> controlLatency_{0};
+
+    // FPS measurement
+    double lastFpsTime_ = 0;
+    int lastFpsFrameCount_ = 0;
+    double actualFps_ = 0;
+
+    // Frame data (protected by mutex)
+    std::mutex frameMutex_;
+    std::vector<uint8_t> frameData_;
+    int frameWidth_ = 0;
+    int frameHeight_ = 0;
+    bool newFrame_ = false;
 };
-
-} // namespace native_viewer
-
-#endif // NATIVE_VIEWER_VIEWER_H

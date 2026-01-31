@@ -5,87 +5,86 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Options
-option(USE_HARDWARE_DECODE "Enable hardware video decoding" ON)
-option(USE_VIDEOTOOLBOX "Use VideoToolbox for hardware decoding (macOS)" ON)
+# Allow older CMake syntax in dependencies
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
+# Fetch libdatachannel for WebRTC DataChannel support
+include(FetchContent)
+FetchContent_Declare(
+    libdatachannel
+    GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
+    GIT_TAG v0.21.2
+)
+set(NO_WEBSOCKET ON CACHE BOOL "" FORCE)
+set(NO_MEDIA ON CACHE BOOL "" FORCE)
+set(NO_EXAMPLES ON CACHE BOOL "" FORCE)
+set(NO_TESTS ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(libdatachannel)
 
 # Find required packages
 find_package(OpenGL REQUIRED)
-find_package(CURL REQUIRED)
+find_package(PkgConfig REQUIRED)
 
-# GLFW - try find_package first (Homebrew), then pkg-config
+# GLFW
 find_package(glfw3 QUIET)
 if(glfw3_FOUND)
     message(STATUS "Found GLFW via find_package")
     set(GLFW_LIBRARIES glfw)
 else()
-    find_package(PkgConfig REQUIRED)
     pkg_check_modules(GLFW REQUIRED glfw3)
 endif()
 
-# libwebrtc
-if(DEFINED LIBWEBRTC_DIR)
-    message(STATUS "Using libwebrtc from: ${LIBWEBRTC_DIR}")
-    set(WEBRTC_INCLUDE_DIRS "${LIBWEBRTC_DIR}/include")
-    set(WEBRTC_LIBRARY_DIRS "${LIBWEBRTC_DIR}/lib")
-    set(WEBRTC_LIBRARIES "${LIBWEBRTC_DIR}/lib/libwebrtc.a")
-else()
-    message(STATUS "libwebrtc not specified. Building stub version for development...")
-    message(STATUS "For full functionality, set -DLIBWEBRTC_DIR=/path/to/libwebrtc")
-    set(BUILD_STUB ON)
-endif()
+# FFmpeg
+pkg_check_modules(AVFORMAT REQUIRED libavformat)
+pkg_check_modules(AVCODEC REQUIRED libavcodec)
+pkg_check_modules(AVUTIL REQUIRED libavutil)
+pkg_check_modules(SWSCALE REQUIRED libswscale)
 
-# macOS-specific configuration (primary target)
+# macOS-specific configuration
 if(APPLE)
     find_library(COCOA_LIBRARY Cocoa REQUIRED)
     find_library(IOKIT_LIBRARY IOKit REQUIRED)
     find_library(COREVIDEO_LIBRARY CoreVideo REQUIRED)
-    find_library(COREMEDIA_LIBRARY CoreMedia REQUIRED)
     find_library(VIDEOTOOLBOX_LIBRARY VideoToolbox REQUIRED)
+    find_library(COREMEDIA_LIBRARY CoreMedia REQUIRED)
     find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
-    find_library(SECURITY_LIBRARY Security REQUIRED)
-    find_library(AUDIOTOOLBOX_LIBRARY AudioToolbox REQUIRED)
     
     set(PLATFORM_LIBRARIES
         ${COCOA_LIBRARY}
         ${IOKIT_LIBRARY}
         ${COREVIDEO_LIBRARY}
-        ${COREMEDIA_LIBRARY}
         ${VIDEOTOOLBOX_LIBRARY}
+        ${COREMEDIA_LIBRARY}
         ${COREFOUNDATION_LIBRARY}
-        ${SECURITY_LIBRARY}
-        ${AUDIOTOOLBOX_LIBRARY}
     )
-    
-    add_definitions(-DWEBRTC_MAC -DWEBRTC_POSIX)
     
     # Suppress OpenGL deprecation warnings on macOS
     add_definitions(-DGL_SILENCE_DEPRECATION)
 elseif(UNIX)
-    # Linux (secondary target)
     find_package(Threads REQUIRED)
-    find_package(PkgConfig REQUIRED)
-    
-    set(PLATFORM_LIBRARIES
-        Threads::Threads
-        ${CMAKE_DL_LIBS}
-    )
-    
-    add_definitions(-DWEBRTC_LINUX -DWEBRTC_POSIX)
+    set(PLATFORM_LIBRARIES Threads::Threads ${CMAKE_DL_LIBS})
 endif()
 
 # Source files
 set(SOURCES
     src/main.cpp
     src/viewer.cpp
-    src/whep_client.cpp
+    src/stream_decoder.cpp
     src/renderer.cpp
+    src/config_manager.cpp
+    src/go2rtc_manager.cpp
+    src/url_prompt.cpp
+    src/control_channel.cpp
 )
 
 set(HEADERS
     src/viewer.h
-    src/whep_client.h
+    src/stream_decoder.h
     src/renderer.h
+    src/config_manager.h
+    src/go2rtc_manager.h
+    src/url_prompt.h
+    src/control_channel.h
 )
 
 # Executable
@@ -94,63 +93,48 @@ add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${OPENGL_INCLUDE_DIR}
-    ${CURL_INCLUDE_DIRS}
+    ${AVFORMAT_INCLUDE_DIRS}
+    ${AVCODEC_INCLUDE_DIRS}
+    ${AVUTIL_INCLUDE_DIRS}
+    ${SWSCALE_INCLUDE_DIRS}
 )
 
 if(TARGET glfw)
-    # Using find_package result
     target_link_libraries(${PROJECT_NAME} PRIVATE glfw)
 else()
-    # Using pkg-config result
     target_include_directories(${PROJECT_NAME} PRIVATE ${GLFW_INCLUDE_DIRS})
     target_link_directories(${PROJECT_NAME} PRIVATE ${GLFW_LIBRARY_DIRS})
     target_link_libraries(${PROJECT_NAME} PRIVATE ${GLFW_LIBRARIES})
 endif()
 
-if(DEFINED WEBRTC_INCLUDE_DIRS)
-    target_include_directories(${PROJECT_NAME} PRIVATE ${WEBRTC_INCLUDE_DIRS})
-endif()
-
-if(BUILD_STUB)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE BUILD_STUB)
-endif()
-
-if(DEFINED WEBRTC_LIBRARY_DIRS)
-    target_link_directories(${PROJECT_NAME} PRIVATE ${WEBRTC_LIBRARY_DIRS})
-endif()
+target_link_directories(${PROJECT_NAME} PRIVATE
+    ${AVFORMAT_LIBRARY_DIRS}
+    ${AVCODEC_LIBRARY_DIRS}
+    ${AVUTIL_LIBRARY_DIRS}
+    ${SWSCALE_LIBRARY_DIRS}
+)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ${OPENGL_LIBRARIES}
-    CURL::libcurl
+    ${AVFORMAT_LIBRARIES}
+    ${AVCODEC_LIBRARIES}
+    ${AVUTIL_LIBRARIES}
+    ${SWSCALE_LIBRARIES}
     ${PLATFORM_LIBRARIES}
+    LibDataChannel::LibDataChannel
 )
-
-if(NOT BUILD_STUB AND DEFINED WEBRTC_LIBRARIES)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${WEBRTC_LIBRARIES})
-endif()
 
 # Install
-install(TARGETS ${PROJECT_NAME}
-    RUNTIME DESTINATION bin
-)
+install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
 
 # Print configuration summary
 message(STATUS "")
 message(STATUS "=== Native Viewer Configuration ===")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
-message(STATUS "Hardware decode: ${USE_HARDWARE_DECODE}")
+message(STATUS "FFmpeg: ${AVFORMAT_VERSION}")
 if(APPLE)
-    message(STATUS "Platform: macOS")
-    message(STATUS "VideoToolbox: Available")
-elseif(UNIX)
+    message(STATUS "Platform: macOS (VideoToolbox HW decode)")
+else()
     message(STATUS "Platform: Linux")
 endif()
-if(BUILD_STUB)
-    message(STATUS "Mode: STUB (libwebrtc not found)")
-    message(STATUS "      Set -DLIBWEBRTC_DIR=/path/to/libwebrtc for full functionality")
-else()
-    message(STATUS "Mode: FULL (libwebrtc found)")
-endif()
 message(STATUS "===================================")
-message(STATUS "")
