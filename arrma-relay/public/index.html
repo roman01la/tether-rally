@@ -2058,8 +2058,9 @@
 				const bars = document.querySelectorAll('#wifi-signal .wifi-bars .bar');
 				const barThresholds = [0, 25, 50, 75]; // Minimum LQ for each bar
 				
-				// Determine signal state for coloring
-				// Critical: < 25% (RSSI < -87dBm), Warning: < 50% (RSSI < -75dBm), Good: >= 50%
+				// Determine signal state for coloring based on link quality percentage
+				// Link quality is derived from RSSI using linear mapping: -100dBm=0%, -50dBm=100%
+				// Critical: LQ < 25%, Warning: LQ < 50%, Good: LQ >= 50%
 				let signalState = 'good';
 				if (lq < 25) signalState = 'critical';
 				else if (lq < 50) signalState = 'warning';

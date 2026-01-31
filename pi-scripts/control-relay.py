@@ -482,7 +482,8 @@ def broadcast_extended_telemetry():
     
     # WiFi Signal: rssi(1), link_quality(1) = 2 bytes
     # RSSI: signal strength in dBm (typically -100 to 0, clamped to -128 to 0)
-    # Link Quality: percentage 0-100% derived from RSSI
+    # Link Quality: percentage 0-100% derived from RSSI using linear mapping
+    # Note: ESP32_RSSI is 0 before first beacon is received
     wifi_rssi = max(-128, min(0, ESP32_RSSI))  # Clamp to signed byte range
     # Convert RSSI to link quality percentage: -100dBm=0%, -50dBm=100%
     wifi_lq = max(0, min(100, int((ESP32_RSSI + 100) * 2)))  # Linear mapping
