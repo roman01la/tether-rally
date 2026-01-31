@@ -13,3 +13,7 @@ pi-scripts/.env
 pi-scripts/mediamtx.yml
 pi-scripts/wpa_supplicant.conf
 pi-scripts/wifi.nmconnection
+
+# Python cache
+__pycache__/
+*.pyc

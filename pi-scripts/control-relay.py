@@ -23,6 +23,8 @@ import time
 import logging
 import os
 import math
+import re
+import subprocess
 import serial
 import pynmea2
 import RPi.GPIO as GPIO
@@ -51,6 +53,11 @@ logger = logging.getLogger(__name__)
 ESP32_IP = None
 ESP32_PORT = 4210
 BEACON_PORT = 4211
+
+# Pi WiFi signal monitoring
+PI_WIFI_RSSI = 0  # WiFi signal strength from Pi's interface (dBm, -100 to 0)
+PI_WIFI_LQ = 0    # WiFi link quality (0-100%)
+PI_WIFI_INTERFACE = None  # Detected wireless interface name (e.g., 'wlan0')
 
 # Control relay HTTP port (exposed via Cloudflare Tunnel)
 HTTP_PORT = 8890
@@ -204,6 +211,92 @@ countdown_task = None  # Asyncio task for countdown timer
 
 turbo_mode = False     # Turbo mode: increases limits (ESP32 enforces hard limits)
 headlight_on = False   # Headlight state (controlled via GPIO 26)
+
+# ----- WiFi Signal Monitoring -----
+
+def get_wireless_interface():
+    """Detect the wireless interface name by parsing /proc/net/wireless.
+    Returns interface name (e.g., 'wlan0') or None if not found.
+    """
+    try:
+        with open('/proc/net/wireless', 'r') as f:
+            lines = f.readlines()
+            # Skip header lines (first 2 lines)
+            for line in lines[2:]:
+                # Format: "wlan0: 0000  ..."
+                parts = line.strip().split(':')
+                if len(parts) >= 1:
+                    interface = parts[0].strip()
+                    if interface:
+                        return interface
+    except Exception as e:
+        logger.debug(f"Error reading /proc/net/wireless: {e}")
+    
+    # Fallback: try common interface names
+    for iface in ['wlan0', 'wlan1', 'wlp2s0', 'wlp3s0']:
+        try:
+            result = subprocess.run(['iwconfig', iface], capture_output=True, text=True, timeout=2)
+            if 'no wireless extensions' not in result.stderr:
+                return iface
+        except Exception:
+            pass
+    
+    return None
+
+def get_wifi_signal():
+    """Get WiFi signal strength and link quality from Pi's wireless interface.
+    Updates global PI_WIFI_RSSI and PI_WIFI_LQ.
+    """
+    global PI_WIFI_RSSI, PI_WIFI_LQ, PI_WIFI_INTERFACE
+    
+    # Detect interface on first call
+    if PI_WIFI_INTERFACE is None:
+        PI_WIFI_INTERFACE = get_wireless_interface()
+        if PI_WIFI_INTERFACE:
+            logger.info(f"Detected wireless interface: {PI_WIFI_INTERFACE}")
+        else:
+            logger.warning("No wireless interface detected, WiFi monitoring disabled")
+            return
+    
+    if not PI_WIFI_INTERFACE:
+        return
+    
+    try:
+        # Use iwconfig to get wireless stats
+        result = subprocess.run(
+            ['iwconfig', PI_WIFI_INTERFACE],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        output = result.stdout
+        
+        for line in output.split('\n'):
+            if 'Link Quality' in line:
+                # Format: "Link Quality=XX/YY  Signal level=-XX dBm"
+                lq_pattern = r'Link Quality[=:](\d+)/(\d+)'
+                match = re.search(lq_pattern, line)
+                if match:
+                    current = int(match.group(1))
+                    maximum = int(match.group(2))
+                    PI_WIFI_LQ = int((current / maximum) * 100) if maximum > 0 else 0
+                
+                # Also try to get signal level
+                signal_pattern = r'Signal level[=:](-?\d+)\s*dBm'
+                match = re.search(signal_pattern, line)
+                if match:
+                    PI_WIFI_RSSI = int(match.group(1))
+    except Exception as e:
+        logger.debug(f"Error getting WiFi signal: {e}")
+
+async def wifi_monitor_loop():
+    """Background task to monitor Pi's WiFi signal at 1Hz"""
+    while True:
+        try:
+            get_wifi_signal()
+        except Exception as e:
+            logger.warning(f"WiFi monitor error: {e}")
+        await asyncio.sleep(1)  # Update every 1 second
 
 # Revoked tokens (persisted to file, keeps last 10)
 REVOKED_TOKENS_FILE = '/home/pi/revoked_tokens.txt'
@@ -419,13 +512,14 @@ def broadcast_debug_telemetry():
 
 
 def broadcast_extended_telemetry():
-    """Broadcast extended controller telemetry at 5Hz (ABS, Hill Hold, Coast, Surface)"""
+    """Broadcast extended controller telemetry at 5Hz (ABS, Hill Hold, Coast, Surface, WiFi)"""
     global data_channels
     global abs_ctrl, abs_enabled
     global hill_hold_ctrl, hill_hold_enabled
     global coast_ctrl, coast_enabled
     global surface_adapt, surface_adapt_enabled
     global imu_pitch
+    global ESP32_RSSI
     
     # ABS Controller: active(1), direction(1), phase(1), slip_ratio(2), esc_state(1) = 6 bytes
     abs_active = 0
@@ -478,15 +572,23 @@ def broadcast_extended_telemetry():
         surf_multiplier = int(max(0, min(500, status['threshold_multiplier'])) * 100)
         surf_measuring = 1 if (surface_adapt_enabled and status['measurement_active']) else 0
     
+    # WiFi Signal: rssi(1), link_quality(1) = 2 bytes
+    # RSSI: Pi's WiFi signal strength in dBm (-100 to 0, clamped to -128 to 0)
+    # Link Quality: Pi's local WiFi link quality (0-100%) - for diagnosing car connectivity
+    # Note: Client-side connection quality (control/video LQ) is calculated in the browser
+    wifi_rssi = max(-128, min(0, PI_WIFI_RSSI))  # Clamp to signed byte range
+    wifi_lq = PI_WIFI_LQ  # Pi's local WiFi quality
+    
     # Pack extended telemetry
     # Format: seq(2) + cmd(1) + 
     #   ABS: active(1) + direction(1) + phase(1) + slip_ratio(2) + esc_state(1) = 6 bytes
     #   HH: active(1) + hold_force(2) + blend(1) + pitch(2) = 6 bytes
     #   Coast: active(1) + injection(2) = 3 bytes
     #   Surface: grip(2) + multiplier(2) + measuring(1) = 5 bytes
-    # Total: 3 + 6 + 6 + 3 + 5 = 23 bytes
+    #   WiFi: rssi(1) + link_quality(1) = 2 bytes
+    # Total: 3 + 6 + 6 + 3 + 5 + 2 = 25 bytes
     
-    message = struct.pack('<HB BBBhB BhBh Bh HHB',
+    message = struct.pack('<HB BBBhB BhBh Bh HHB bB',
         0, CMD_EXTENDED_TELEM,
         # ABS (6 bytes)
         abs_active, abs_direction, abs_phase, abs_slip_ratio, abs_esc_state,
@@ -495,7 +597,9 @@ def broadcast_extended_telemetry():
         # Coast Control (3 bytes)
         coast_active, coast_injection,
         # Surface Adaptation (5 bytes)
-        surf_grip, surf_multiplier, surf_measuring
+        surf_grip, surf_multiplier, surf_measuring,
+        # WiFi Signal (2 bytes)
+        wifi_rssi, wifi_lq
     )
     
     # Send to all connected data channels
@@ -1780,6 +1884,9 @@ async def main():
     
     # Start IMU (BNO055) reader loop
     imu_task = asyncio.create_task(imu_reader_loop())
+    
+    # Start WiFi/Internet quality monitor loop (1Hz)
+    wifi_task = asyncio.create_task(wifi_monitor_loop())
     
     # Start telemetry broadcast loop (10Hz)
     telemetry_task = asyncio.create_task(telemetry_broadcast_loop())

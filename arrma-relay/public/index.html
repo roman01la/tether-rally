@@ -276,6 +276,73 @@
 				color: rgba(255, 255, 255, 0.6);
 				font-family: monospace;
 			}
+			/* WiFi Signal Indicator (Pi's car WiFi) */
+			#wifi-signal {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+				font-size: 12px;
+				color: rgba(255, 255, 255, 0.6);
+				font-family: monospace;
+			}
+			#wifi-signal .wifi-icon {
+				font-size: 14px;
+				opacity: 0.8;
+			}
+			#wifi-signal .wifi-bars {
+				display: flex;
+				align-items: flex-end;
+				gap: 2px;
+				height: 14px;
+			}
+			#wifi-signal .wifi-bars .bar {
+				width: 4px;
+				background: rgba(255, 255, 255, 0.3);
+				border-radius: 1px;
+				transition: background 0.3s, height 0.3s;
+			}
+			#wifi-signal .wifi-bars .bar-1 { height: 4px; }
+			#wifi-signal .wifi-bars .bar-2 { height: 7px; }
+			#wifi-signal .wifi-bars .bar-3 { height: 10px; }
+			#wifi-signal .wifi-bars .bar-4 { height: 14px; }
+			#wifi-signal .wifi-bars .bar.active {
+				background: rgba(0, 255, 0, 0.9);
+			}
+			#wifi-signal .wifi-bars .bar.active.warning {
+				background: rgba(255, 200, 0, 0.9);
+			}
+			#wifi-signal .wifi-bars .bar.active.critical {
+				background: rgba(255, 50, 50, 0.9);
+			}
+			#wifi-signal .wifi-dbm {
+				min-width: 50px;
+				text-align: right;
+			}
+			/* Connection Quality Indicators (Control & Video) */
+			.connection-quality {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+				font-size: 12px;
+				color: rgba(255, 255, 255, 0.6);
+				font-family: monospace;
+			}
+			.connection-quality .cq-icon {
+				font-size: 12px;
+			}
+			.connection-quality .cq-value {
+				min-width: 32px;
+				text-align: right;
+			}
+			.connection-quality .cq-value.good {
+				color: rgba(0, 255, 0, 0.9);
+			}
+			.connection-quality .cq-value.warning {
+				color: rgba(255, 200, 0, 0.9);
+			}
+			.connection-quality .cq-value.critical {
+				color: rgba(255, 50, 50, 0.9);
+			}
 			#hud-clock {
 				position: absolute;
 				top: 15px;
@@ -1386,6 +1453,24 @@
 				<div id="race-timer">00:00.000</div>
 				<div id="values">T: 0.000 | S: 0.000</div>
 				<div id="latency">--ms</div>
+				<div id="wifi-signal" title="Car WiFi Signal (Pi)">
+					<span class="wifi-icon">📶</span>
+					<span class="wifi-bars">
+						<span class="bar bar-1"></span>
+						<span class="bar bar-2"></span>
+						<span class="bar bar-3"></span>
+						<span class="bar bar-4"></span>
+					</span>
+					<span class="wifi-dbm">--dBm</span>
+				</div>
+				<div id="control-quality" class="connection-quality" title="Control Channel Quality">
+					<span class="cq-icon">🎮</span>
+					<span class="cq-value" id="control-lq">--%</span>
+				</div>
+				<div id="video-quality" class="connection-quality" title="Video Channel Quality">
+					<span class="cq-icon">📹</span>
+					<span class="cq-value" id="video-lq">--%</span>
+				</div>
 			</div>
 
 			<!-- Compass HUD (video game style horizontal strip) -->
@@ -1869,7 +1954,14 @@
 				coast: { active: false, injection: 0 },
 				// Surface Adaptation
 				surface: { grip: 70, multiplier: 100, measuring: false },
+				// WiFi Signal (Pi's car WiFi - for diagnosing car connectivity)
+				wifi: { rssi: 0, linkQuality: 0 },
 			};
+
+			// Connection quality state (calculated client-side from RTT)
+			let controlLQ = -1; // Control channel quality (0-100%), -1 = not measured
+			let videoLQ = -1;   // Video channel quality (0-100%), -1 = not measured
+			let videoRttMs = 0; // Video channel RTT in ms (from WebRTC stats)
 
 			// DOM elements
 			const loginScreen = document.getElementById('login-screen');
@@ -1987,6 +2079,93 @@
 
 			function updateDisplay() {
 				valuesEl.textContent = `T: ${thr.toFixed(3)} | S: ${str.toFixed(3)}`;
+			}
+
+			function updateWifiIndicator() {
+				const rssi = extendedTelem.wifi.rssi;
+				const lq = extendedTelem.wifi.linkQuality;
+				
+				// Update dBm text
+				const dbmEl = document.querySelector('#wifi-signal .wifi-dbm');
+				if (dbmEl) {
+					dbmEl.textContent = `${rssi}dBm`;
+				}
+				
+				// Update signal bars based on Pi's WiFi link quality (0-100%)
+				// Bar thresholds: 1=25%, 2=50%, 3=75%, 4=100%
+				const bars = document.querySelectorAll('#wifi-signal .wifi-bars .bar');
+				const barThresholds = [0, 25, 50, 75]; // Minimum LQ for each bar
+				
+				// Determine signal state for coloring
+				// Critical: LQ < 25%, Warning: LQ < 50%, Good: LQ >= 50%
+				let signalState = 'good';
+				if (lq < 25) signalState = 'critical';
+				else if (lq < 50) signalState = 'warning';
+				
+				bars.forEach((bar, index) => {
+					bar.classList.remove('active', 'warning', 'critical');
+					if (lq >= barThresholds[index]) {
+						bar.classList.add('active');
+						if (signalState === 'warning') bar.classList.add('warning');
+						if (signalState === 'critical') bar.classList.add('critical');
+					}
+				});
+			}
+
+			// Update control channel quality indicator
+			// Called from PONG handler with one-way latency in ms
+			function updateControlQuality(oneWayMs) {
+				// 100% at ≤40ms one-way, 0% at ≥500ms
+				if (oneWayMs <= 40) {
+					controlLQ = 100;
+				} else if (oneWayMs >= 500) {
+					controlLQ = 0;
+				} else {
+					controlLQ = Math.round(100 - (oneWayMs - 40) / 4.6);
+				}
+				
+				const el = document.getElementById('control-lq');
+				if (el) {
+					el.textContent = `${controlLQ}%`;
+					el.classList.remove('good', 'warning', 'critical');
+					if (controlLQ >= 75) el.classList.add('good');
+					else if (controlLQ >= 50) el.classList.add('warning');
+					else el.classList.add('critical');
+				}
+			}
+
+			// Update video channel quality indicator
+			// Called from updateVideoStats with RTT in ms
+			function updateVideoQuality(rttMs) {
+				videoRttMs = rttMs;
+				// 100% at ≤140ms RTT, 0% at ≥500ms
+				if (rttMs <= 140) {
+					videoLQ = 100;
+				} else if (rttMs >= 500) {
+					videoLQ = 0;
+				} else {
+					videoLQ = Math.round(100 - (rttMs - 140) / 3.6);
+				}
+				
+				const el = document.getElementById('video-lq');
+				if (el) {
+					el.textContent = `${videoLQ}%`;
+					el.classList.remove('good', 'warning', 'critical');
+					if (videoLQ >= 75) el.classList.add('good');
+					else if (videoLQ >= 50) el.classList.add('warning');
+					else el.classList.add('critical');
+				}
+			}
+
+			// Reset video quality indicator when video disconnects
+			function resetVideoQuality() {
+				videoLQ = null;
+				videoRttMs = null;
+				const el = document.getElementById('video-lq');
+				if (el) {
+					el.textContent = '--%';
+					el.classList.remove('good', 'warning', 'critical');
+				}
 			}
 
 			function updateThumbs() {
@@ -2268,6 +2447,7 @@
 								videoPlaceholder.innerHTML = '<div class="spinner"></div><span>FPV Disconnected - Reconnecting...</span>';
 								videoPlaceholder.style.display = 'flex';
 								videoConnected = false;
+								resetVideoQuality();
 								sendVideoStatus(false);
 							};
 
@@ -2514,6 +2694,11 @@
 					wcFrameCount = 0;
 					wcLastStatsTime = now;
 
+					// Update video quality indicator if we have RTT
+					if (rttMs > 0) {
+						updateVideoQuality(rttMs);
+					}
+
 					// Request stats from worker
 					if (decoderWorker) {
 						decoderWorker.postMessage({ type: 'getStats' });
@@ -2564,6 +2749,7 @@
 					fallbackVideo.srcObject = null;
 				}
 				videoConnected = false;
+				resetVideoQuality();
 				videoPlaceholder.innerHTML = '<div class="spinner"></div><span>Connecting video...</span>';
 				videoPlaceholder.style.display = 'flex';
 				throttleZone.classList.add('disabled');
@@ -3071,8 +3257,8 @@
 			}
 
 			function handleExtendedTelemetry(view) {
-				// Parse extended telemetry packet (23 bytes total)
-				// Format: seq(2) + cmd(1) + ABS(6) + HH(6) + Coast(3) + Surface(5)
+				// Parse extended telemetry packet (25 bytes total)
+				// Format: seq(2) + cmd(1) + ABS(6) + HH(6) + Coast(3) + Surface(5) + WiFi(2)
 
 				// ABS Controller (offset 3-8)
 				extendedTelem.abs.active = view.getUint8(3) === 1;
@@ -3095,6 +3281,13 @@
 				extendedTelem.surface.grip = view.getUint16(18, true) / 100;
 				extendedTelem.surface.multiplier = view.getUint16(20, true) / 100;
 				extendedTelem.surface.measuring = view.getUint8(22) === 1;
+
+				// WiFi Signal (offset 23-24) - Pi's car WiFi for diagnosing car connectivity
+				if (view.byteLength >= 25) {
+					extendedTelem.wifi.rssi = view.getInt8(23); // Pi WiFi RSSI: -128 to 0 dBm
+					extendedTelem.wifi.linkQuality = view.getUint8(24); // Pi WiFi link quality: 0-100%
+					updateWifiIndicator();
+				}
 
 				// Update debug overlay if visible
 				if (debugOverlayVisible) {
@@ -3683,6 +3876,7 @@
 								const oneWay = rtt / 2; // Input latency is one-way, not round-trip
 								latency = latency === 0 ? oneWay : latency * 0.9 + oneWay * 0.1;
 								latencyEl.textContent = `${Math.round(latency)}ms`;
+								updateControlQuality(latency);
 							}
 							// Handle race commands from admin
 							// Payload: sub_cmd(1) = total 4 bytes
