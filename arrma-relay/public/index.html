@@ -276,6 +276,48 @@
 				color: rgba(255, 255, 255, 0.6);
 				font-family: monospace;
 			}
+			/* WiFi Signal Indicator */
+			#wifi-signal {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+				font-size: 12px;
+				color: rgba(255, 255, 255, 0.6);
+				font-family: monospace;
+			}
+			#wifi-signal .wifi-icon {
+				font-size: 14px;
+				opacity: 0.8;
+			}
+			#wifi-signal .wifi-bars {
+				display: flex;
+				align-items: flex-end;
+				gap: 2px;
+				height: 14px;
+			}
+			#wifi-signal .wifi-bars .bar {
+				width: 4px;
+				background: rgba(255, 255, 255, 0.3);
+				border-radius: 1px;
+				transition: background 0.3s, height 0.3s;
+			}
+			#wifi-signal .wifi-bars .bar-1 { height: 4px; }
+			#wifi-signal .wifi-bars .bar-2 { height: 7px; }
+			#wifi-signal .wifi-bars .bar-3 { height: 10px; }
+			#wifi-signal .wifi-bars .bar-4 { height: 14px; }
+			#wifi-signal .wifi-bars .bar.active {
+				background: rgba(0, 255, 0, 0.9);
+			}
+			#wifi-signal .wifi-bars .bar.active.warning {
+				background: rgba(255, 200, 0, 0.9);
+			}
+			#wifi-signal .wifi-bars .bar.active.critical {
+				background: rgba(255, 50, 50, 0.9);
+			}
+			#wifi-signal .wifi-dbm {
+				min-width: 50px;
+				text-align: right;
+			}
 			#hud-clock {
 				position: absolute;
 				top: 15px;
@@ -1386,6 +1428,16 @@
 				<div id="race-timer">00:00.000</div>
 				<div id="values">T: 0.000 | S: 0.000</div>
 				<div id="latency">--ms</div>
+				<div id="wifi-signal" title="WiFi Signal Strength">
+					<span class="wifi-icon">📶</span>
+					<span class="wifi-bars">
+						<span class="bar bar-1"></span>
+						<span class="bar bar-2"></span>
+						<span class="bar bar-3"></span>
+						<span class="bar bar-4"></span>
+					</span>
+					<span class="wifi-dbm">--dBm</span>
+				</div>
 			</div>
 
 			<!-- Compass HUD (video game style horizontal strip) -->
@@ -1869,6 +1921,8 @@
 				coast: { active: false, injection: 0 },
 				// Surface Adaptation
 				surface: { grip: 70, multiplier: 100, measuring: false },
+				// WiFi Signal (from ESP32)
+				wifi: { rssi: 0, linkQuality: 0 },
 			};
 
 			// DOM elements
@@ -1987,6 +2041,37 @@
 
 			function updateDisplay() {
 				valuesEl.textContent = `T: ${thr.toFixed(3)} | S: ${str.toFixed(3)}`;
+			}
+
+			function updateWifiIndicator() {
+				const rssi = extendedTelem.wifi.rssi;
+				const lq = extendedTelem.wifi.linkQuality;
+				
+				// Update dBm text
+				const dbmEl = document.querySelector('#wifi-signal .wifi-dbm');
+				if (dbmEl) {
+					dbmEl.textContent = `${rssi}dBm`;
+				}
+				
+				// Update signal bars based on link quality (0-100%)
+				// Bar thresholds: 1=25%, 2=50%, 3=75%, 4=100%
+				const bars = document.querySelectorAll('#wifi-signal .wifi-bars .bar');
+				const barThresholds = [0, 25, 50, 75]; // Minimum LQ for each bar
+				
+				// Determine signal state for coloring
+				// Critical: < 25% (RSSI < -87dBm), Warning: < 50% (RSSI < -75dBm), Good: >= 50%
+				let signalState = 'good';
+				if (lq < 25) signalState = 'critical';
+				else if (lq < 50) signalState = 'warning';
+				
+				bars.forEach((bar, index) => {
+					bar.classList.remove('active', 'warning', 'critical');
+					if (lq >= barThresholds[index]) {
+						bar.classList.add('active');
+						if (signalState === 'warning') bar.classList.add('warning');
+						if (signalState === 'critical') bar.classList.add('critical');
+					}
+				});
 			}
 
 			function updateThumbs() {
@@ -3071,8 +3156,8 @@
 			}
 
 			function handleExtendedTelemetry(view) {
-				// Parse extended telemetry packet (23 bytes total)
-				// Format: seq(2) + cmd(1) + ABS(6) + HH(6) + Coast(3) + Surface(5)
+				// Parse extended telemetry packet (25 bytes total)
+				// Format: seq(2) + cmd(1) + ABS(6) + HH(6) + Coast(3) + Surface(5) + WiFi(2)
 
 				// ABS Controller (offset 3-8)
 				extendedTelem.abs.active = view.getUint8(3) === 1;
@@ -3095,6 +3180,13 @@
 				extendedTelem.surface.grip = view.getUint16(18, true) / 100;
 				extendedTelem.surface.multiplier = view.getUint16(20, true) / 100;
 				extendedTelem.surface.measuring = view.getUint8(22) === 1;
+
+				// WiFi Signal (offset 23-24) - only parse if packet is long enough
+				if (view.byteLength >= 25) {
+					extendedTelem.wifi.rssi = view.getInt8(23); // Signed byte: -128 to 0 dBm
+					extendedTelem.wifi.linkQuality = view.getUint8(24); // 0-100%
+					updateWifiIndicator();
+				}
 
 				// Update debug overlay if visible
 				if (debugOverlayVisible) {

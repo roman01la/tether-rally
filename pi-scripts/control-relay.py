@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 ESP32_IP = None
 ESP32_PORT = 4210
 BEACON_PORT = 4211
+ESP32_RSSI = 0  # WiFi signal strength from ESP32 beacon (dBm, -100 to 0)
 
 # Control relay HTTP port (exposed via Cloudflare Tunnel)
 HTTP_PORT = 8890
@@ -419,13 +420,14 @@ def broadcast_debug_telemetry():
 
 
 def broadcast_extended_telemetry():
-    """Broadcast extended controller telemetry at 5Hz (ABS, Hill Hold, Coast, Surface)"""
+    """Broadcast extended controller telemetry at 5Hz (ABS, Hill Hold, Coast, Surface, WiFi)"""
     global data_channels
     global abs_ctrl, abs_enabled
     global hill_hold_ctrl, hill_hold_enabled
     global coast_ctrl, coast_enabled
     global surface_adapt, surface_adapt_enabled
     global imu_pitch
+    global ESP32_RSSI
     
     # ABS Controller: active(1), direction(1), phase(1), slip_ratio(2), esc_state(1) = 6 bytes
     abs_active = 0
@@ -478,15 +480,23 @@ def broadcast_extended_telemetry():
         surf_multiplier = int(max(0, min(500, status['threshold_multiplier'])) * 100)
         surf_measuring = 1 if (surface_adapt_enabled and status['measurement_active']) else 0
     
+    # WiFi Signal: rssi(1), link_quality(1) = 2 bytes
+    # RSSI: signal strength in dBm (typically -100 to 0, clamped to -128 to 0)
+    # Link Quality: percentage 0-100% derived from RSSI
+    wifi_rssi = max(-128, min(0, ESP32_RSSI))  # Clamp to signed byte range
+    # Convert RSSI to link quality percentage: -100dBm=0%, -50dBm=100%
+    wifi_lq = max(0, min(100, int((ESP32_RSSI + 100) * 2)))  # Linear mapping
+    
     # Pack extended telemetry
     # Format: seq(2) + cmd(1) + 
     #   ABS: active(1) + direction(1) + phase(1) + slip_ratio(2) + esc_state(1) = 6 bytes
     #   HH: active(1) + hold_force(2) + blend(1) + pitch(2) = 6 bytes
     #   Coast: active(1) + injection(2) = 3 bytes
     #   Surface: grip(2) + multiplier(2) + measuring(1) = 5 bytes
-    # Total: 3 + 6 + 6 + 3 + 5 = 23 bytes
+    #   WiFi: rssi(1) + link_quality(1) = 2 bytes
+    # Total: 3 + 6 + 6 + 3 + 5 + 2 = 25 bytes
     
-    message = struct.pack('<HB BBBhB BhBh Bh HHB',
+    message = struct.pack('<HB BBBhB BhBh Bh HHB bB',
         0, CMD_EXTENDED_TELEM,
         # ABS (6 bytes)
         abs_active, abs_direction, abs_phase, abs_slip_ratio, abs_esc_state,
@@ -495,7 +505,9 @@ def broadcast_extended_telemetry():
         # Coast Control (3 bytes)
         coast_active, coast_injection,
         # Surface Adaptation (5 bytes)
-        surf_grip, surf_multiplier, surf_measuring
+        surf_grip, surf_multiplier, surf_measuring,
+        # WiFi Signal (2 bytes)
+        wifi_rssi, wifi_lq
     )
     
     # Send to all connected data channels
@@ -1016,7 +1028,7 @@ def forward_to_esp32(message: bytes):
 
 async def discover_esp32():
     """Listen for ESP32 beacon broadcasts"""
-    global ESP32_IP
+    global ESP32_IP, ESP32_RSSI
     
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1031,11 +1043,18 @@ async def discover_esp32():
     while True:
         try:
             data, addr = await loop.sock_recvfrom(sock, 1024)
-            if data == b'ARRMA':
+            # Beacon format: "ARRMA" (5 bytes) + optional RSSI (1 byte, signed)
+            if len(data) >= 5 and data[:5] == b'ARRMA':
                 new_ip = addr[0]
                 if ESP32_IP != new_ip:
                     ESP32_IP = new_ip
                     logger.info(f"Discovered ESP32 at {ESP32_IP}")
+                
+                # Parse RSSI if present (6 byte beacon)
+                if len(data) >= 6:
+                    # RSSI is a signed byte (-100 to 0 dBm typical)
+                    rssi_byte = data[5]
+                    ESP32_RSSI = rssi_byte if rssi_byte < 128 else rssi_byte - 256
         except BlockingIOError:
             await asyncio.sleep(0.1)
         except Exception as e:

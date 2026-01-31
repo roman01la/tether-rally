@@ -213,7 +213,7 @@ All secrets are externalized for open-source compatibility:
 | STABILITY   | 0x0A | stability(1)                                                                                                                                            | Browser→Pi: stability control toggle (0=off, 1=on)                 |
 | DEBUG_TELEM | 0x0B | TC(9) + YRC(10) + SAW(4) + SS(5)                                                                                                                        | Pi→Browser: debug telemetry for stability systems (10Hz, 31 bytes) |
 | HEADLIGHT   | 0x0C | headlight(1)                                                                                                                                            | Browser→Pi: headlight toggle via GPIO 26 (0=off, 1=on)             |
-| EXT_TELEM   | 0x0D | ABS(6) + HillHold(6) + Coast(3) + Surface(5)                                                                                                            | Pi→Browser: extended telemetry (23 bytes, 10Hz)                    |
+| EXT_TELEM   | 0x0D | ABS(6) + HillHold(6) + Coast(3) + Surface(5) + WiFi(2)                                                                                                  | Pi→Browser: extended telemetry (25 bytes, 5Hz)                     |
 | ABS         | 0x0E | abs(1)                                                                                                                                                  | Browser→Pi: ABS toggle (0=off, 1=on)                               |
 | HILL_HOLD   | 0x0F | hill_hold(1)                                                                                                                                            | Browser→Pi: hill hold toggle (0=off, 1=on)                         |
 | COAST       | 0x10 | coast(1)                                                                                                                                                | Browser→Pi: coast control toggle (0=off, 1=on)                     |
@@ -466,7 +466,7 @@ pi-scripts/
 - Direct P2P connection (10-15ms RTT vs 100-200ms with WS relay)
 - Token validation with HMAC-SHA256 on Pi
 - DataChannel: `ordered: false, maxRetransmits: 0` (UDP-like)
-- ESP32 beacon discovery (broadcasts "ARRMA" on UDP 4211)
+- ESP32 beacon discovery (broadcasts "ARRMA" + RSSI on UDP 4211, 1Hz)
 - No Durable Objects needed (stateless Worker)
 
 **ESP32 changes (main.ino):**
@@ -475,7 +475,7 @@ pi-scripts/
 - FreeRTOS dual-core: UDP receive (Core 0), Control loop (Core 1)
 - 200 Hz output with EMA smoothing + slew rate limiting
 - Staged timeout: 80ms hold → 250ms neutral
-- Beacon broadcast for Pi discovery
+- Beacon broadcast for Pi discovery (includes WiFi RSSI)
 
 **Pi relay (control-relay.py):**
 
