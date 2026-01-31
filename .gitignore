@@ -17,3 +17,4 @@ pi-scripts/wifi.nmconnection
 # Python cache
 __pycache__/
 *.pyc
+_codeql_detected_source_root
