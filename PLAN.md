@@ -483,7 +483,7 @@ pi-scripts/
 - Forwards binary packets to ESP32 via UDP
 - Forwards PONG from ESP32 back to browser (latency = browser↔ESP32)
 - Runs as systemd service with FIFO scheduling
-- WiFi signal monitoring (Pi's RSSI + internet link quality via ping)
+- WiFi signal monitoring (Pi's RSSI + client connection quality via WebRTC RTT)
 
 **Deployment:** See [SETUP.md](SETUP.md) for detailed deployment instructions.
 

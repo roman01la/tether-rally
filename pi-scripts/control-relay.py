@@ -25,7 +25,6 @@ import os
 import math
 import re
 import serial
-import subprocess
 import pynmea2
 import RPi.GPIO as GPIO
 from aiohttp import web
@@ -57,7 +56,8 @@ BEACON_PORT = 4211
 # Pi WiFi signal monitoring
 PI_WIFI_RSSI = 0  # WiFi signal strength from Pi's interface (dBm, -100 to 0)
 PI_WIFI_LQ = 0    # WiFi link quality (0-100%)
-INTERNET_LQ = -1  # Internet connection quality based on ping (0-100%), -1 = not measured yet
+CLIENT_RTT_MS = -1  # RTT to connected client in milliseconds, -1 = not measured yet
+CLIENT_LQ = -1  # Connection quality to client based on RTT (0-100%), -1 = not measured yet
 
 # Control relay HTTP port (exposed via Cloudflare Tunnel)
 HTTP_PORT = 8890
@@ -212,10 +212,7 @@ countdown_task = None  # Asyncio task for countdown timer
 turbo_mode = False     # Turbo mode: increases limits (ESP32 enforces hard limits)
 headlight_on = False   # Headlight state (controlled via GPIO 26)
 
-# ----- WiFi and Internet Quality Monitoring -----
-
-# Sentinel value to indicate internet quality has not been measured yet
-INTERNET_LQ_NOT_MEASURED = -1
+# ----- WiFi and Client Connection Quality Monitoring -----
 
 def get_wifi_signal():
     """Get WiFi signal strength and link quality from Pi's wireless interface.
@@ -250,47 +247,52 @@ def get_wifi_signal():
     except Exception as e:
         logger.debug(f"Error getting WiFi signal: {e}")
 
-def get_internet_quality():
-    """Get internet connection quality by measuring ping latency.
-    Updates global INTERNET_LQ.
-    100% = <20ms, 0% = >500ms or failed
+async def get_client_connection_quality():
+    """Get connection quality to the connected client from WebRTC stats.
+    Updates global CLIENT_RTT_MS and CLIENT_LQ.
+    100% = <20ms RTT, 0% = >500ms RTT or no connection
     """
-    global INTERNET_LQ
+    global CLIENT_RTT_MS, CLIENT_LQ, pc
     try:
-        # Ping a reliable server (Cloudflare DNS) with 1 packet, 1 second timeout
-        result = subprocess.run(
-            ['ping', '-c', '1', '-W', '1', '1.1.1.1'],
-            capture_output=True,
-            text=True,
-            timeout=2
-        )
+        if pc is None or pc.connectionState != "connected":
+            CLIENT_RTT_MS = -1
+            CLIENT_LQ = -1
+            return
         
-        if result.returncode == 0:
-            # Parse latency from output (e.g., "time=12.3 ms")
-            match = re.search(r'time=(\d+\.?\d*)\s*ms', result.stdout)
-            if match:
-                latency_ms = float(match.group(1))
-                # Convert latency to quality: 20ms=100%, 500ms=0%
-                if latency_ms <= 20:
-                    INTERNET_LQ = 100
-                elif latency_ms >= 500:
-                    INTERNET_LQ = 0
-                else:
-                    INTERNET_LQ = int(100 - ((latency_ms - 20) / 4.8))
-            else:
-                INTERNET_LQ = 0
-        else:
-            INTERNET_LQ = 0
+        # Get stats from the peer connection
+        stats = await pc.getStats()
+        
+        # Look for candidate-pair stats which contain RTT
+        for stat in stats.values():
+            if stat.type == "candidate-pair" and stat.state == "succeeded":
+                # currentRoundTripTime is in seconds
+                if hasattr(stat, 'currentRoundTripTime') and stat.currentRoundTripTime is not None:
+                    rtt_ms = stat.currentRoundTripTime * 1000
+                    CLIENT_RTT_MS = int(rtt_ms)
+                    
+                    # Convert RTT to quality: 20ms=100%, 500ms=0%
+                    if rtt_ms <= 20:
+                        CLIENT_LQ = 100
+                    elif rtt_ms >= 500:
+                        CLIENT_LQ = 0
+                    else:
+                        CLIENT_LQ = int(100 - ((rtt_ms - 20) / 4.8))
+                    return
+        
+        # No RTT found in stats
+        CLIENT_RTT_MS = -1
+        CLIENT_LQ = -1
     except Exception as e:
-        logger.debug(f"Error checking internet quality: {e}")
-        INTERNET_LQ = 0
+        logger.debug(f"Error getting client connection quality: {e}")
+        CLIENT_RTT_MS = -1
+        CLIENT_LQ = -1
 
 async def wifi_monitor_loop():
-    """Background task to monitor WiFi and internet quality at 1Hz"""
+    """Background task to monitor WiFi signal and client connection quality at 1Hz"""
     while True:
         try:
             get_wifi_signal()
-            get_internet_quality()
+            await get_client_connection_quality()
         except Exception as e:
             logger.warning(f"WiFi monitor error: {e}")
         await asyncio.sleep(1)  # Update every 1 second
@@ -569,13 +571,13 @@ def broadcast_extended_telemetry():
         surf_multiplier = int(max(0, min(500, status['threshold_multiplier'])) * 100)
         surf_measuring = 1 if (surface_adapt_enabled and status['measurement_active']) else 0
     
-    # WiFi/Internet Signal: rssi(1), link_quality(1) = 2 bytes
+    # WiFi/Client Connection: rssi(1), link_quality(1) = 2 bytes
     # RSSI: Pi's WiFi signal strength in dBm (-100 to 0, clamped to -128 to 0)
-    # Link Quality: Internet connection quality (0-100%) based on ping latency
+    # Link Quality: Client connection quality (0-100%) based on WebRTC RTT
     wifi_rssi = max(-128, min(0, PI_WIFI_RSSI))  # Clamp to signed byte range
-    # Use internet LQ if measured (>= 0), otherwise fall back to WiFi LQ
-    # INTERNET_LQ starts at -1 (not measured) and becomes 0-100 after first ping
-    wifi_lq = INTERNET_LQ if INTERNET_LQ >= 0 else PI_WIFI_LQ
+    # Use client LQ if measured (>= 0), otherwise fall back to WiFi LQ
+    # CLIENT_LQ starts at -1 (not measured) and becomes 0-100 after first RTT measurement
+    wifi_lq = CLIENT_LQ if CLIENT_LQ >= 0 else PI_WIFI_LQ
     
     # Pack extended telemetry
     # Format: seq(2) + cmd(1) + 
