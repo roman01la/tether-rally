@@ -1,0 +1,396 @@
+#include "url_prompt.h"
+
+#ifdef __APPLE__
+#define GL_SILENCE_DEPRECATION
+#endif
+
+#include <GLFW/glfw3.h>
+
+#ifdef __APPLE__
+#include <OpenGL/gl3.h>
+#else
+#include <GL/gl.h>
+#endif
+
+#include <iostream>
+#include <cstring>
+#include <algorithm>
+
+// Simple bitmap font for rendering text (8x8 ASCII subset)
+// Only includes characters needed for URL input
+static const unsigned char font8x8[][8] = {
+    // Space (32)
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    // ! (33) - through / (47) - punctuation
+    {0x18, 0x18, 0x18, 0x18, 0x18, 0x00, 0x18, 0x00}, // !
+    {0x6c, 0x6c, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00}, // "
+    {0x6c, 0xfe, 0x6c, 0x6c, 0xfe, 0x6c, 0x00, 0x00}, // #
+    {0x18, 0x3e, 0x60, 0x3c, 0x06, 0x7c, 0x18, 0x00}, // $
+    {0x00, 0x66, 0xac, 0xd8, 0x36, 0x6a, 0xcc, 0x00}, // %
+    {0x38, 0x6c, 0x38, 0x76, 0xdc, 0xcc, 0x76, 0x00}, // &
+    {0x18, 0x18, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00}, // '
+    {0x0c, 0x18, 0x30, 0x30, 0x30, 0x18, 0x0c, 0x00}, // (
+    {0x30, 0x18, 0x0c, 0x0c, 0x0c, 0x18, 0x30, 0x00}, // )
+    {0x00, 0x66, 0x3c, 0xff, 0x3c, 0x66, 0x00, 0x00}, // *
+    {0x00, 0x18, 0x18, 0x7e, 0x18, 0x18, 0x00, 0x00}, // +
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x30}, // ,
+    {0x00, 0x00, 0x00, 0x7e, 0x00, 0x00, 0x00, 0x00}, // -
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00}, // .
+    {0x06, 0x0c, 0x18, 0x30, 0x60, 0xc0, 0x80, 0x00}, // /
+    // 0-9 (48-57)
+    {0x3c, 0x66, 0x6e, 0x7e, 0x76, 0x66, 0x3c, 0x00}, // 0
+    {0x18, 0x38, 0x18, 0x18, 0x18, 0x18, 0x7e, 0x00}, // 1
+    {0x3c, 0x66, 0x06, 0x1c, 0x30, 0x60, 0x7e, 0x00}, // 2
+    {0x3c, 0x66, 0x06, 0x1c, 0x06, 0x66, 0x3c, 0x00}, // 3
+    {0x0c, 0x1c, 0x3c, 0x6c, 0x7e, 0x0c, 0x0c, 0x00}, // 4
+    {0x7e, 0x60, 0x7c, 0x06, 0x06, 0x66, 0x3c, 0x00}, // 5
+    {0x1c, 0x30, 0x60, 0x7c, 0x66, 0x66, 0x3c, 0x00}, // 6
+    {0x7e, 0x06, 0x0c, 0x18, 0x30, 0x30, 0x30, 0x00}, // 7
+    {0x3c, 0x66, 0x66, 0x3c, 0x66, 0x66, 0x3c, 0x00}, // 8
+    {0x3c, 0x66, 0x66, 0x3e, 0x06, 0x0c, 0x38, 0x00}, // 9
+    // : (58) - @ (64)
+    {0x00, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00}, // :
+    {0x00, 0x18, 0x18, 0x00, 0x18, 0x18, 0x30, 0x00}, // ;
+    {0x0c, 0x18, 0x30, 0x60, 0x30, 0x18, 0x0c, 0x00}, // <
+    {0x00, 0x00, 0x7e, 0x00, 0x7e, 0x00, 0x00, 0x00}, // =
+    {0x30, 0x18, 0x0c, 0x06, 0x0c, 0x18, 0x30, 0x00}, // >
+    {0x3c, 0x66, 0x0c, 0x18, 0x18, 0x00, 0x18, 0x00}, // ?
+    {0x3c, 0x66, 0x6e, 0x6a, 0x6e, 0x60, 0x3c, 0x00}, // @
+    // A-Z (65-90)
+    {0x18, 0x3c, 0x66, 0x66, 0x7e, 0x66, 0x66, 0x00}, // A
+    {0x7c, 0x66, 0x66, 0x7c, 0x66, 0x66, 0x7c, 0x00}, // B
+    {0x3c, 0x66, 0x60, 0x60, 0x60, 0x66, 0x3c, 0x00}, // C
+    {0x78, 0x6c, 0x66, 0x66, 0x66, 0x6c, 0x78, 0x00}, // D
+    {0x7e, 0x60, 0x60, 0x7c, 0x60, 0x60, 0x7e, 0x00}, // E
+    {0x7e, 0x60, 0x60, 0x7c, 0x60, 0x60, 0x60, 0x00}, // F
+    {0x3c, 0x66, 0x60, 0x6e, 0x66, 0x66, 0x3e, 0x00}, // G
+    {0x66, 0x66, 0x66, 0x7e, 0x66, 0x66, 0x66, 0x00}, // H
+    {0x7e, 0x18, 0x18, 0x18, 0x18, 0x18, 0x7e, 0x00}, // I
+    {0x3e, 0x0c, 0x0c, 0x0c, 0x0c, 0x6c, 0x38, 0x00}, // J
+    {0x66, 0x6c, 0x78, 0x70, 0x78, 0x6c, 0x66, 0x00}, // K
+    {0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x7e, 0x00}, // L
+    {0xc6, 0xee, 0xfe, 0xd6, 0xc6, 0xc6, 0xc6, 0x00}, // M
+    {0x66, 0x76, 0x7e, 0x7e, 0x6e, 0x66, 0x66, 0x00}, // N
+    {0x3c, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3c, 0x00}, // O
+    {0x7c, 0x66, 0x66, 0x7c, 0x60, 0x60, 0x60, 0x00}, // P
+    {0x3c, 0x66, 0x66, 0x66, 0x6a, 0x6c, 0x36, 0x00}, // Q
+    {0x7c, 0x66, 0x66, 0x7c, 0x6c, 0x66, 0x66, 0x00}, // R
+    {0x3c, 0x66, 0x60, 0x3c, 0x06, 0x66, 0x3c, 0x00}, // S
+    {0x7e, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00}, // T
+    {0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3c, 0x00}, // U
+    {0x66, 0x66, 0x66, 0x66, 0x66, 0x3c, 0x18, 0x00}, // V
+    {0xc6, 0xc6, 0xc6, 0xd6, 0xfe, 0xee, 0xc6, 0x00}, // W
+    {0x66, 0x66, 0x3c, 0x18, 0x3c, 0x66, 0x66, 0x00}, // X
+    {0x66, 0x66, 0x66, 0x3c, 0x18, 0x18, 0x18, 0x00}, // Y
+    {0x7e, 0x06, 0x0c, 0x18, 0x30, 0x60, 0x7e, 0x00}, // Z
+    // [ (91) - ` (96)
+    {0x3c, 0x30, 0x30, 0x30, 0x30, 0x30, 0x3c, 0x00}, // [
+    {0xc0, 0x60, 0x30, 0x18, 0x0c, 0x06, 0x02, 0x00}, // backslash
+    {0x3c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x3c, 0x00}, // ]
+    {0x10, 0x38, 0x6c, 0xc6, 0x00, 0x00, 0x00, 0x00}, // ^
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff}, // _
+    {0x18, 0x18, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00}, // `
+    // a-z (97-122)
+    {0x00, 0x00, 0x3c, 0x06, 0x3e, 0x66, 0x3e, 0x00}, // a
+    {0x60, 0x60, 0x7c, 0x66, 0x66, 0x66, 0x7c, 0x00}, // b
+    {0x00, 0x00, 0x3c, 0x66, 0x60, 0x66, 0x3c, 0x00}, // c
+    {0x06, 0x06, 0x3e, 0x66, 0x66, 0x66, 0x3e, 0x00}, // d
+    {0x00, 0x00, 0x3c, 0x66, 0x7e, 0x60, 0x3c, 0x00}, // e
+    {0x1c, 0x30, 0x7c, 0x30, 0x30, 0x30, 0x30, 0x00}, // f
+    {0x00, 0x00, 0x3e, 0x66, 0x66, 0x3e, 0x06, 0x3c}, // g
+    {0x60, 0x60, 0x7c, 0x66, 0x66, 0x66, 0x66, 0x00}, // h
+    {0x18, 0x00, 0x38, 0x18, 0x18, 0x18, 0x3c, 0x00}, // i
+    {0x0c, 0x00, 0x1c, 0x0c, 0x0c, 0x0c, 0x6c, 0x38}, // j
+    {0x60, 0x60, 0x66, 0x6c, 0x78, 0x6c, 0x66, 0x00}, // k
+    {0x38, 0x18, 0x18, 0x18, 0x18, 0x18, 0x3c, 0x00}, // l
+    {0x00, 0x00, 0xec, 0xfe, 0xd6, 0xc6, 0xc6, 0x00}, // m
+    {0x00, 0x00, 0x7c, 0x66, 0x66, 0x66, 0x66, 0x00}, // n
+    {0x00, 0x00, 0x3c, 0x66, 0x66, 0x66, 0x3c, 0x00}, // o
+    {0x00, 0x00, 0x7c, 0x66, 0x66, 0x7c, 0x60, 0x60}, // p
+    {0x00, 0x00, 0x3e, 0x66, 0x66, 0x3e, 0x06, 0x06}, // q
+    {0x00, 0x00, 0x7c, 0x66, 0x60, 0x60, 0x60, 0x00}, // r
+    {0x00, 0x00, 0x3e, 0x60, 0x3c, 0x06, 0x7c, 0x00}, // s
+    {0x30, 0x30, 0x7c, 0x30, 0x30, 0x30, 0x1c, 0x00}, // t
+    {0x00, 0x00, 0x66, 0x66, 0x66, 0x66, 0x3e, 0x00}, // u
+    {0x00, 0x00, 0x66, 0x66, 0x66, 0x3c, 0x18, 0x00}, // v
+    {0x00, 0x00, 0xc6, 0xc6, 0xd6, 0xfe, 0x6c, 0x00}, // w
+    {0x00, 0x00, 0x66, 0x3c, 0x18, 0x3c, 0x66, 0x00}, // x
+    {0x00, 0x00, 0x66, 0x66, 0x66, 0x3e, 0x06, 0x3c}, // y
+    {0x00, 0x00, 0x7e, 0x0c, 0x18, 0x30, 0x7e, 0x00}, // z
+};
+
+static int getFontIndex(char c)
+{
+    if (c >= 32 && c <= 122)
+    {
+        return c - 32;
+    }
+    return 0; // space for unknown chars
+}
+
+// Global state for callback
+static std::string g_inputText;
+static bool g_done = false;
+static bool g_cancelled = false;
+static size_t g_cursorPos = 0;
+
+static void charCallback(GLFWwindow * /*window*/, unsigned int codepoint)
+{
+    if (codepoint >= 32 && codepoint < 127)
+    {
+        g_inputText.insert(g_cursorPos, 1, static_cast<char>(codepoint));
+        g_cursorPos++;
+    }
+}
+
+static void keyCallback(GLFWwindow *window, int key, int /*scancode*/, int action, int mods)
+{
+    if (action != GLFW_PRESS && action != GLFW_REPEAT)
+        return;
+
+    switch (key)
+    {
+    case GLFW_KEY_ENTER:
+        if (!g_inputText.empty())
+        {
+            g_done = true;
+        }
+        break;
+    case GLFW_KEY_ESCAPE:
+        g_cancelled = true;
+        break;
+    case GLFW_KEY_BACKSPACE:
+        if (g_cursorPos > 0)
+        {
+            g_inputText.erase(g_cursorPos - 1, 1);
+            g_cursorPos--;
+        }
+        break;
+    case GLFW_KEY_DELETE:
+        if (g_cursorPos < g_inputText.length())
+        {
+            g_inputText.erase(g_cursorPos, 1);
+        }
+        break;
+    case GLFW_KEY_LEFT:
+        if (g_cursorPos > 0)
+            g_cursorPos--;
+        break;
+    case GLFW_KEY_RIGHT:
+        if (g_cursorPos < g_inputText.length())
+            g_cursorPos++;
+        break;
+    case GLFW_KEY_HOME:
+        g_cursorPos = 0;
+        break;
+    case GLFW_KEY_END:
+        g_cursorPos = g_inputText.length();
+        break;
+    case GLFW_KEY_V:
+        if (mods & GLFW_MOD_SUPER || mods & GLFW_MOD_CONTROL)
+        {
+            const char *clipboard = glfwGetClipboardString(window);
+            if (clipboard)
+            {
+                std::string paste(clipboard);
+                // Remove newlines and carriage returns from pasted text
+                paste.erase(std::remove(paste.begin(), paste.end(), '\n'), paste.end());
+                paste.erase(std::remove(paste.begin(), paste.end(), '\r'), paste.end());
+                g_inputText.insert(g_cursorPos, paste);
+                g_cursorPos += paste.length();
+            }
+        }
+        break;
+    }
+}
+
+std::optional<std::string> UrlPromptDialog::show(const std::string &defaultUrl)
+{
+    // Reset state
+    g_inputText = defaultUrl;
+    g_cursorPos = g_inputText.length();
+    g_done = false;
+    g_cancelled = false;
+
+    if (!glfwInit())
+    {
+        std::cerr << "Failed to initialize GLFW" << std::endl;
+        return std::nullopt;
+    }
+
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+    glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+
+    GLFWwindow *window = glfwCreateWindow(600, 150, "ARRMA Viewer - Enter WHEP URL", nullptr, nullptr);
+    if (!window)
+    {
+        std::cerr << "Failed to create dialog window" << std::endl;
+        glfwTerminate();
+        return std::nullopt;
+    }
+
+    glfwMakeContextCurrent(window);
+    glfwSetCharCallback(window, charCallback);
+    glfwSetKeyCallback(window, keyCallback);
+
+    // Create simple shader for rendering
+    const char *vertexShaderSource = R"(
+        #version 330 core
+        layout (location = 0) in vec2 aPos;
+        uniform vec2 offset;
+        uniform vec2 scale;
+        void main() {
+            gl_Position = vec4(aPos * scale + offset, 0.0, 1.0);
+        }
+    )";
+
+    const char *fragmentShaderSource = R"(
+        #version 330 core
+        out vec4 FragColor;
+        uniform vec3 color;
+        void main() {
+            FragColor = vec4(color, 1.0);
+        }
+    )";
+
+    unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
+    glCompileShader(vertexShader);
+
+    unsigned int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
+    glCompileShader(fragmentShader);
+
+    unsigned int shaderProgram = glCreateProgram();
+    glAttachShader(shaderProgram, vertexShader);
+    glAttachShader(shaderProgram, fragmentShader);
+    glLinkProgram(shaderProgram);
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    // Create quad for character rendering
+    float quadVertices[] = {
+        0.0f, 0.0f,
+        1.0f, 0.0f,
+        1.0f, 1.0f,
+        0.0f, 1.0f};
+    unsigned int quadIndices[] = {0, 1, 2, 2, 3, 0};
+
+    unsigned int VAO, VBO, EBO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glGenBuffers(1, &EBO);
+
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(quadIndices), quadIndices, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
+    glEnableVertexAttribArray(0);
+
+    int offsetLoc = glGetUniformLocation(shaderProgram, "offset");
+    int scaleLoc = glGetUniformLocation(shaderProgram, "scale");
+    int colorLoc = glGetUniformLocation(shaderProgram, "color");
+
+    auto drawText = [&](const std::string &text, float x, float y, float charW, float charH, float r, float g, float b)
+    {
+        glUniform3f(colorLoc, r, g, b);
+        glUniform2f(scaleLoc, charW, charH);
+
+        for (size_t i = 0; i < text.length(); i++)
+        {
+            int fontIdx = getFontIndex(text[i]);
+            const unsigned char *glyph = font8x8[fontIdx];
+
+            // Draw each pixel of the 8x8 glyph
+            for (int row = 0; row < 8; row++)
+            {
+                for (int col = 0; col < 8; col++)
+                {
+                    if (glyph[row] & (0x80 >> col))
+                    {
+                        float px = x + i * charW + col * (charW / 8.0f);
+                        float py = y - row * (charH / 8.0f);
+                        glUniform2f(offsetLoc, px, py);
+                        glUniform2f(scaleLoc, charW / 8.0f, charH / 8.0f);
+                        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
+                    }
+                }
+            }
+        }
+    };
+
+    auto drawRect = [&](float x, float y, float w, float h, float r, float g, float b)
+    {
+        glUniform3f(colorLoc, r, g, b);
+        glUniform2f(offsetLoc, x, y);
+        glUniform2f(scaleLoc, w, h);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
+    };
+
+    while (!glfwWindowShouldClose(window) && !g_done && !g_cancelled)
+    {
+        glfwPollEvents();
+
+        glClearColor(0.15f, 0.15f, 0.18f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(shaderProgram);
+        glBindVertexArray(VAO);
+
+        // Draw title
+        drawText("Enter WHEP URL:", -0.9f, 0.7f, 0.04f, 0.08f, 0.9f, 0.9f, 0.9f);
+
+        // Draw input box background
+        drawRect(-0.9f, -0.1f, 1.8f, 0.4f, 0.25f, 0.25f, 0.28f);
+
+        // Draw input text
+        std::string displayText = g_inputText;
+        if (displayText.length() > 50)
+        {
+            // Show last 50 chars if too long
+            displayText = "..." + displayText.substr(displayText.length() - 47);
+        }
+        drawText(displayText, -0.85f, 0.15f, 0.03f, 0.06f, 1.0f, 1.0f, 1.0f);
+
+        // Draw cursor (blinking)
+        double time = glfwGetTime();
+        if (static_cast<int>(time * 2) % 2 == 0)
+        {
+            size_t visibleCursor = g_cursorPos;
+            if (g_inputText.length() > 50 && g_cursorPos > 47)
+            {
+                visibleCursor = g_cursorPos - (g_inputText.length() - 50) + 3;
+            }
+            float cursorX = -0.85f + visibleCursor * 0.03f;
+            drawRect(cursorX, -0.05f, 0.003f, 0.25f, 1.0f, 1.0f, 1.0f);
+        }
+
+        // Draw instructions
+        drawText("Press ENTER to connect, ESC to cancel", -0.9f, -0.5f, 0.025f, 0.05f, 0.6f, 0.6f, 0.6f);
+        drawText("Example: https://cam.example.com/cam/whep", -0.9f, -0.7f, 0.02f, 0.04f, 0.5f, 0.5f, 0.5f);
+
+        glfwSwapBuffers(window);
+    }
+
+    // Cleanup
+    glDeleteVertexArrays(1, &VAO);
+    glDeleteBuffers(1, &VBO);
+    glDeleteBuffers(1, &EBO);
+    glDeleteProgram(shaderProgram);
+
+    glfwDestroyWindow(window);
+    // Don't terminate GLFW - main window will use it
+
+    if (g_cancelled || g_inputText.empty())
+    {
+        return std::nullopt;
+    }
+
+    return g_inputText;
+}
