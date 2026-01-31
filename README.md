@@ -36,6 +36,7 @@ The system streams 720p @ 60fps video from a camera mounted on the car while you
 
 - **Low-latency control** — ~30-100ms over internet, ~10-15ms on LAN
 - **Live FPV video** — 720p @ 60fps H.264 streaming
+- **Gamepad support** — Steam Deck, Xbox, PlayStation controllers via Gamepad API
 - **Touch & keyboard controls** — Works on mobile and desktop
 - **Auto-reconnect** — Handles connection drops gracefully
 
@@ -168,23 +169,85 @@ See [SETUP.md](SETUP.md) for detailed configuration instructions.
 
 ### Controls
 
-| Input                      | Action            |
-| -------------------------- | ----------------- |
-| Left zone drag up/down     | Throttle          |
-| Right zone drag left/right | Steering          |
-| W / ↑                      | Forward           |
-| S / ↓                      | Reverse           |
-| A / ←                      | Steer left        |
-| D / →                      | Steer right       |
-| E                          | Toggle Turbo      |
-| Q                          | Toggle Traction   |
-| R                          | Toggle Stability  |
-| B                          | Toggle ABS        |
-| G                          | Toggle Hill Hold  |
-| N                          | Toggle Coast      |
-| F                          | Toggle Surface    |
-| H                          | Toggle Headlights |
-| C                          | Debug Overlay     |
+#### Gamepad (Steam Deck / Xbox / PlayStation)
+
+| Input                   | Action            |
+| ----------------------- | ----------------- |
+| Right Trigger (RT/R2)   | Throttle/Forward  |
+| Left Trigger (LT/L2)    | Brake/Reverse     |
+| Left Stick (horizontal) | Steering          |
+| A (Xbox) / X (PS)       | Toggle Turbo      |
+| B (Xbox) / O (PS)       | Toggle Traction   |
+| X (Xbox) / □ (PS)       | Toggle Stability  |
+| Y (Xbox) / △ (PS)       | Toggle ABS        |
+| LB/L1                   | Toggle Hill Hold  |
+| RB/R1                   | Toggle Coast      |
+| D-pad Up                | Toggle Surface    |
+| D-pad Down              | Toggle Headlights |
+| Start/Menu              | Debug Overlay     |
+
+#### Keyboard
+
+| Input | Action            |
+| ----- | ----------------- |
+| W / ↑ | Forward           |
+| S / ↓ | Reverse           |
+| A / ← | Steer left        |
+| D / → | Steer right       |
+| E     | Toggle Turbo      |
+| Q     | Toggle Traction   |
+| R     | Toggle Stability  |
+| B     | Toggle ABS        |
+| G     | Toggle Hill Hold  |
+| N     | Toggle Coast      |
+| F     | Toggle Surface    |
+| H     | Toggle Headlights |
+| C     | Debug Overlay     |
+
+#### Touch (Mobile)
+
+| Input                      | Action   |
+| -------------------------- | -------- |
+| Left zone drag up/down     | Throttle |
+| Right zone drag left/right | Steering |
+
+### Steam Deck Setup
+
+To use the Steam Deck's built-in controls with the browser interface:
+
+**1. Add browser as a non-Steam game**
+
+In Desktop Mode, open Steam → Games → Add a Non-Steam Game → select your browser (Firefox or Chrome).
+
+**2. Configure fullscreen launch**
+
+Right-click the browser in your library → Properties → set Launch Options:
+
+```bash
+# Firefox
+--kiosk "https://your-relay.workers.dev/"
+
+# Chrome
+--app="https://your-relay.workers.dev/" --start-fullscreen
+```
+
+**3. Grant joystick permissions to Flatpak browser**
+
+Flatpak browsers need access to `/run/udev` for gamepad detection:
+
+```bash
+# List installed Flatpak apps to find your browser ID
+flatpak list --app
+
+# Grant udev access (use the actual app ID from above)
+flatpak override --user --filesystem=/run/udev:ro org.mozilla.firefox
+# or for Chrome:
+flatpak override --user --filesystem=/run/udev:ro com.google.Chrome
+```
+
+**4. Launch from Game Mode**
+
+Switch to Game Mode and launch the browser from your library. The Gamepad API will now detect the Steam Deck controls.
 
 ### Admin Dashboard
 

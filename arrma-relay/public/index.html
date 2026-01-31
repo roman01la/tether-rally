@@ -202,6 +202,11 @@
 				pointer-events: none;
 			}
 
+			/* Hide touch controls when gamepad is connected */
+			body.gamepad-connected .control-zone {
+				display: none;
+			}
+
 			/* HUD overlay */
 			#hud {
 				position: absolute;
@@ -285,10 +290,6 @@
 				color: rgba(255, 255, 255, 0.6);
 				font-family: monospace;
 			}
-			#wifi-signal .wifi-icon {
-				font-size: 14px;
-				opacity: 0.8;
-			}
 			#wifi-signal .wifi-bars {
 				display: flex;
 				align-items: flex-end;
@@ -299,12 +300,22 @@
 				width: 4px;
 				background: rgba(255, 255, 255, 0.3);
 				border-radius: 1px;
-				transition: background 0.3s, height 0.3s;
+				transition:
+					background 0.3s,
+					height 0.3s;
 			}
-			#wifi-signal .wifi-bars .bar-1 { height: 4px; }
-			#wifi-signal .wifi-bars .bar-2 { height: 7px; }
-			#wifi-signal .wifi-bars .bar-3 { height: 10px; }
-			#wifi-signal .wifi-bars .bar-4 { height: 14px; }
+			#wifi-signal .wifi-bars .bar-1 {
+				height: 4px;
+			}
+			#wifi-signal .wifi-bars .bar-2 {
+				height: 7px;
+			}
+			#wifi-signal .wifi-bars .bar-3 {
+				height: 10px;
+			}
+			#wifi-signal .wifi-bars .bar-4 {
+				height: 14px;
+			}
 			#wifi-signal .wifi-bars .bar.active {
 				background: rgba(0, 255, 0, 0.9);
 			}
@@ -1421,6 +1432,7 @@
 
 				<h2>📱 Controls</h2>
 				<ul>
+					<li><strong>Gamepad (Steam Deck/Xbox):</strong> RT=gas, LT=brake, Left stick=steer</li>
 					<li><strong>Mobile:</strong> Right stick steering, left trigger throttle</li>
 					<li><strong>Desktop:</strong> Arrow keys or WASD</li>
 				</ul>
@@ -1454,7 +1466,6 @@
 				<div id="values">T: 0.000 | S: 0.000</div>
 				<div id="latency">--ms</div>
 				<div id="wifi-signal" title="Car WiFi Signal (Pi)">
-					<span class="wifi-icon">📶</span>
 					<span class="wifi-bars">
 						<span class="bar bar-1"></span>
 						<span class="bar bar-2"></span>
@@ -1538,7 +1549,7 @@
 			</div>
 
 			<div id="instructions">
-				WASD / Arrow keys | E = Turbo | Q = TC | R = ESC | B = ABS | G = Hill | N = Coast | F = Surface | H = Light | C = Debug
+				🎮 RT/LT=Gas/Brake LStick=Steer | ⌨️ WASD | E=Turbo Q=TC R=ESC B=ABS G=Hill N=Coast F=Surf H=Light C=Debug
 			</div>
 
 			<!-- Control Buttons -->
@@ -1897,6 +1908,31 @@
 			const strStep = 1.0;
 			const strSmoothRate = 0.15; // How fast steering interpolates (0-1, lower = smoother)
 
+			// Gamepad state (Steam Deck / Xbox / PlayStation controllers)
+			let gamepadConnected = false;
+			let gamepadIndex = null;
+			const gamepadDeadzone = 0.1; // Ignore small stick/trigger movements
+			// Track previous button states for edge detection (toggle on press, not hold)
+			let prevGamepadButtons = {};
+
+			// Gamepad haptic feedback (vibration)
+			// duration: ms, weakMagnitude/strongMagnitude: 0-1
+			function vibrateGamepad(duration = 100, weakMagnitude = 0.5, strongMagnitude = 0.5) {
+				if (!gamepadConnected || gamepadIndex === null) return;
+				const gp = navigator.getGamepads()[gamepadIndex];
+				if (!gp || !gp.vibrationActuator) return;
+				try {
+					gp.vibrationActuator.playEffect('dual-rumble', {
+						startDelay: 0,
+						duration: duration,
+						weakMagnitude: weakMagnitude,
+						strongMagnitude: strongMagnitude
+					});
+				} catch (e) {
+					// Vibration not supported or failed
+				}
+			}
+
 			// Race state
 			let raceStartTime = null;
 			let raceTimerInterval = null;
@@ -1960,7 +1996,7 @@
 
 			// Connection quality state (calculated client-side from RTT)
 			let controlLQ = -1; // Control channel quality (0-100%), -1 = not measured
-			let videoLQ = -1;   // Video channel quality (0-100%), -1 = not measured
+			let videoLQ = -1; // Video channel quality (0-100%), -1 = not measured
 			let videoRttMs = 0; // Video channel RTT in ms (from WebRTC stats)
 
 			// DOM elements
@@ -2084,24 +2120,24 @@
 			function updateWifiIndicator() {
 				const rssi = extendedTelem.wifi.rssi;
 				const lq = extendedTelem.wifi.linkQuality;
-				
+
 				// Update dBm text
 				const dbmEl = document.querySelector('#wifi-signal .wifi-dbm');
 				if (dbmEl) {
 					dbmEl.textContent = `${rssi}dBm`;
 				}
-				
+
 				// Update signal bars based on Pi's WiFi link quality (0-100%)
 				// Bar thresholds: 1=25%, 2=50%, 3=75%, 4=100%
 				const bars = document.querySelectorAll('#wifi-signal .wifi-bars .bar');
 				const barThresholds = [0, 25, 50, 75]; // Minimum LQ for each bar
-				
+
 				// Determine signal state for coloring
 				// Critical: LQ < 25%, Warning: LQ < 50%, Good: LQ >= 50%
 				let signalState = 'good';
 				if (lq < 25) signalState = 'critical';
 				else if (lq < 50) signalState = 'warning';
-				
+
 				bars.forEach((bar, index) => {
 					bar.classList.remove('active', 'warning', 'critical');
 					if (lq >= barThresholds[index]) {
@@ -2123,7 +2159,7 @@
 				} else {
 					controlLQ = Math.round(100 - (oneWayMs - 40) / 4.6);
 				}
-				
+
 				const el = document.getElementById('control-lq');
 				if (el) {
 					el.textContent = `${controlLQ}%`;
@@ -2146,7 +2182,7 @@
 				} else {
 					videoLQ = Math.round(100 - (rttMs - 140) / 3.6);
 				}
-				
+
 				const el = document.getElementById('video-lq');
 				if (el) {
 					el.textContent = `${videoLQ}%`;
@@ -2195,9 +2231,105 @@
 				}
 			}
 
+			// Gamepad polling - called every control loop iteration
+			// Steam Deck / Xbox layout:
+			//   RT (index 7) = throttle (forward)
+			//   LT (index 6) = brake/reverse
+			//   Left stick X (axis 0) = steering
+			//   A (0) = turbo, B (1) = traction, X (2) = stability, Y (3) = ABS
+			//   LB (4) = hill hold, RB (5) = coast, D-pad up (12) = surface, D-pad down (13) = headlight
+			function pollGamepad() {
+				const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+				let gp = null;
+
+				// Find the first connected gamepad
+				for (let i = 0; i < gamepads.length; i++) {
+					if (gamepads[i] && gamepads[i].connected) {
+						gp = gamepads[i];
+						if (gamepadIndex !== i) {
+							gamepadIndex = i;
+							gamepadConnected = true;
+							console.log('Gamepad connected:', gp.id);
+						}
+						break;
+					}
+				}
+
+				if (!gp) {
+					if (gamepadConnected) {
+						gamepadConnected = false;
+						gamepadIndex = null;
+						console.log('Gamepad disconnected');
+					}
+					return false; // No gamepad input
+				}
+
+				// Read triggers for throttle
+				// RT (index 7) = forward throttle (0 to 1)
+				// LT (index 6) = reverse/brake (0 to 1)
+				const rt = gp.buttons[7] ? gp.buttons[7].value : 0;
+				const lt = gp.buttons[6] ? gp.buttons[6].value : 0;
+
+				// Calculate throttle: RT pushes forward, LT pushes backward
+				let gpThrottle = rt - lt;
+
+				// Apply deadzone
+				if (Math.abs(gpThrottle) < gamepadDeadzone) gpThrottle = 0;
+
+				// Read left stick X axis for steering (axis 0)
+				// Positive = right, Negative = left
+				let gpSteering = gp.axes[0] || 0;
+
+				// Apply deadzone to steering
+				if (Math.abs(gpSteering) < gamepadDeadzone) gpSteering = 0;
+
+				// Always update throttle and steering from gamepad when connected
+				// This ensures releasing the trigger returns throttle to 0 (like racing games)
+				thrSlider = gpThrottle;
+				thr = gpThrottle;
+				str = gpSteering;
+				strTarget = gpSteering; // Keep strTarget in sync for keyboard/gamepad switching
+
+				// Check if gamepad has meaningful input (for return value)
+				const hasInput = Math.abs(gpThrottle) > 0 || Math.abs(gpSteering) > 0;
+
+				// Handle button presses for feature toggles (edge detection - only on press)
+				// Button handling is intentionally separate from movement input - buttons should
+				// always be processed even when the sticks/triggers are centered
+				const buttonMappings = [
+					{ index: 0, action: toggleTurbo }, // A = Turbo
+					{ index: 1, action: toggleTraction }, // B = Traction Control
+					{ index: 2, action: toggleStability }, // X = Stability/ESC
+					{ index: 3, action: toggleAbs }, // Y = ABS
+					{ index: 4, action: toggleHillHold }, // LB = Hill Hold
+					{ index: 5, action: toggleCoast }, // RB = Coast Control
+					{ index: 12, action: toggleSurface }, // D-pad Up = Surface Adaptation
+					{ index: 13, action: toggleHeadlight }, // D-pad Down = Headlight
+					{ index: 9, action: toggleDebugOverlay }, // Start/Menu = Debug Overlay
+				];
+
+				for (const mapping of buttonMappings) {
+					const btn = gp.buttons[mapping.index];
+					if (btn) {
+						const pressed = btn.pressed || btn.value > 0.5;
+						const wasPressed = prevGamepadButtons[mapping.index] || false;
+						// Trigger on rising edge (button just pressed)
+						if (pressed && !wasPressed) {
+							mapping.action();
+						}
+						prevGamepadButtons[mapping.index] = pressed;
+					}
+				}
+
+				return hasInput;
+			}
+
 			function sendControl() {
-				// Smooth keyboard steering interpolation (only when using keyboard)
-				if (keys.size > 0 || str !== strTarget) {
+				// Poll gamepad for input
+				const gamepadActive = pollGamepad();
+
+				// Smooth keyboard steering interpolation (only when using keyboard, not gamepad)
+				if (!gamepadActive && (keys.size > 0 || str !== strTarget)) {
 					str += (strTarget - str) * strSmoothRate;
 					// Snap to target when very close
 					if (Math.abs(str - strTarget) < 0.01) str = strTarget;
@@ -2879,12 +3011,16 @@
 				countdownOverlay.classList.add('active');
 				countdownNumber.textContent = '3';
 				countdownNumber.className = '';
+				// Vibrate on 3 - short pulse
+				vibrateGamepad(150, 0.3, 0.3);
 
 				setTimeout(() => {
 					countdownNumber.textContent = '2';
 					countdownNumber.style.animation = 'none';
 					countdownNumber.offsetHeight; // Trigger reflow
 					countdownNumber.style.animation = '';
+					// Vibrate on 2 - short pulse
+					vibrateGamepad(150, 0.4, 0.4);
 				}, COUNTDOWN_STEP_MS);
 
 				setTimeout(() => {
@@ -2892,6 +3028,8 @@
 					countdownNumber.style.animation = 'none';
 					countdownNumber.offsetHeight; // Trigger reflow
 					countdownNumber.style.animation = '';
+					// Vibrate on 1 - short pulse
+					vibrateGamepad(150, 0.5, 0.5);
 				}, COUNTDOWN_STEP_MS * 2);
 
 				setTimeout(() => {
@@ -2900,6 +3038,8 @@
 					countdownNumber.style.animation = 'none';
 					countdownNumber.offsetHeight; // Trigger reflow
 					countdownNumber.style.animation = '';
+					// Vibrate on GO! - stronger, longer pulse
+					vibrateGamepad(300, 0.8, 1.0);
 				}, COUNTDOWN_GO_MS);
 
 				setTimeout(() => {
@@ -4238,6 +4378,24 @@
 					str = 0;
 					strTarget = 0;
 					if (isConnected) sendControl();
+				}
+			});
+
+			// Gamepad connect/disconnect event listeners
+			window.addEventListener('gamepadconnected', (e) => {
+				console.log('Gamepad connected event:', e.gamepad.id);
+				gamepadIndex = e.gamepad.index;
+				gamepadConnected = true;
+				document.body.classList.add('gamepad-connected');
+			});
+
+			window.addEventListener('gamepaddisconnected', (e) => {
+				console.log('Gamepad disconnected event:', e.gamepad.id);
+				if (gamepadIndex === e.gamepad.index) {
+					gamepadIndex = null;
+					gamepadConnected = false;
+					prevGamepadButtons = {};
+					document.body.classList.remove('gamepad-connected');
 				}
 			});
 
