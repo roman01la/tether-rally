@@ -245,7 +245,16 @@ flatpak override --user --filesystem=/run/udev:ro org.mozilla.firefox
 flatpak override --user --filesystem=/run/udev:ro com.google.Chrome
 ```
 
-**4. Launch from Game Mode**
+**4. Configure controller layout**
+
+In Game Mode, select the browser → Controller icon (🎮) → select "Gamepad with Mouse Trackpad" template, or start from "Gamepad" template and manually set:
+
+- Right Trackpad → Mouse behavior (for UI interaction before race starts)
+- Left Trackpad → Mouse behavior (optional)
+
+This lets you click buttons and navigate the UI with the trackpad while using sticks/triggers for driving.
+
+**5. Launch from Game Mode**
 
 Switch to Game Mode and launch the browser from your library. The Gamepad API will now detect the Steam Deck controls.
 

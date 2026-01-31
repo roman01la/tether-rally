@@ -339,7 +339,9 @@
 				font-family: monospace;
 			}
 			.connection-quality .cq-icon {
-				font-size: 12px;
+				width: 14px;
+				height: 14px;
+				opacity: 0.7;
 			}
 			.connection-quality .cq-value {
 				min-width: 32px;
@@ -353,6 +355,20 @@
 			}
 			.connection-quality .cq-value.critical {
 				color: rgba(255, 50, 50, 0.9);
+			}
+			.headlight-indicator {
+				display: flex;
+				align-items: center;
+				margin-left: 8px;
+			}
+			.headlight-indicator img {
+				width: 18px;
+				height: 18px;
+				opacity: 0.5;
+				transition: opacity 0.2s;
+			}
+			.headlight-indicator.on img {
+				opacity: 1;
 			}
 			#hud-clock {
 				position: absolute;
@@ -1475,12 +1491,15 @@
 					<span class="wifi-dbm">--dBm</span>
 				</div>
 				<div id="control-quality" class="connection-quality" title="Control Channel Quality">
-					<span class="cq-icon">🎮</span>
+					<img class="cq-icon" src="icons/controller.svg" alt="Control" />
 					<span class="cq-value" id="control-lq">--%</span>
 				</div>
 				<div id="video-quality" class="connection-quality" title="Video Channel Quality">
-					<span class="cq-icon">📹</span>
+					<img class="cq-icon" src="icons/video.svg" alt="Video" />
 					<span class="cq-value" id="video-lq">--%</span>
+				</div>
+				<div id="headlight-status" class="headlight-indicator" title="Headlights">
+					<img id="headlight-icon" src="icons/headlight_off.svg" alt="Headlight" />
 				</div>
 			</div>
 
@@ -1527,7 +1546,7 @@
 				<div id="waiting-content">
 					<div id="waiting-spinner"></div>
 					<div id="waiting-text">Waiting for race</div>
-					<button id="ready-btn" disabled onclick="sendReady()">Ready</button>
+					<button id="ready-btn" class="startable" disabled onclick="sendReady()">Ready</button>
 				</div>
 			</div>
 
@@ -1548,19 +1567,16 @@
 				<div id="steering-thumb" class="slider-thumb"></div>
 			</div>
 
-			<div id="instructions">
-				🎮 RT/LT=Gas/Brake LStick=Steer | ⌨️ WASD | E=Turbo Q=TC R=ESC B=ABS G=Hill N=Coast F=Surf H=Light C=Debug
-			</div>
+			<div id="instructions">🎮 RT/LT=Gas/Brake LStick=Steer | ⌨️ WASD | Q=Assist E=Turbo H=Light C=Debug</div>
 
 			<!-- Control Buttons -->
 			<div id="control-buttons-container">
-				<button id="stability-btn" class="control-btn disabled" onclick="toggleStability()">⚖️ ESC (R)</button>
-				<button id="traction-btn" class="control-btn disabled" onclick="toggleTraction()">🛞 TC (Q)</button>
-				<button id="abs-btn" class="control-btn disabled" onclick="toggleAbs()">🛑 ABS (B)</button>
-				<button id="turbo-btn" class="control-btn disabled" onclick="toggleTurbo()">🚀 TURBO (E)</button>
-				<button id="hill-hold-btn" class="control-btn disabled" onclick="toggleHillHold()">⛰️ HILL (G)</button>
-				<button id="coast-btn" class="control-btn disabled" onclick="toggleCoast()">🌊 COAST (N)</button>
-				<button id="surface-btn" class="control-btn disabled" onclick="toggleSurface()">🛣️ SURF (F)</button>
+				<button id="assist-btn" class="control-btn disabled" onclick="toggleAssist()" data-kb="🛡️ ASSIST (Q)" data-gp="Ⓑ ASSIST">
+					🛡️ ASSIST (Q)
+				</button>
+				<button id="turbo-btn" class="control-btn disabled" onclick="toggleTurbo()" data-kb="🚀 TURBO (E)" data-gp="Ⓐ TURBO">
+					🚀 TURBO (E)
+				</button>
 			</div>
 
 			<!-- Debug Overlay -->
@@ -1926,7 +1942,7 @@
 						startDelay: 0,
 						duration: duration,
 						weakMagnitude: weakMagnitude,
-						strongMagnitude: strongMagnitude
+						strongMagnitude: strongMagnitude,
 					});
 				} catch (e) {
 					// Vibration not supported or failed
@@ -2298,14 +2314,9 @@
 				// always be processed even when the sticks/triggers are centered
 				const buttonMappings = [
 					{ index: 0, action: toggleTurbo }, // A = Turbo
-					{ index: 1, action: toggleTraction }, // B = Traction Control
-					{ index: 2, action: toggleStability }, // X = Stability/ESC
-					{ index: 3, action: toggleAbs }, // Y = ABS
-					{ index: 4, action: toggleHillHold }, // LB = Hill Hold
-					{ index: 5, action: toggleCoast }, // RB = Coast Control
-					{ index: 12, action: toggleSurface }, // D-pad Up = Surface Adaptation
+					{ index: 1, action: toggleAssist }, // B = Assist (all stability features)
 					{ index: 13, action: toggleHeadlight }, // D-pad Down = Headlight
-					{ index: 9, action: toggleDebugOverlay }, // Start/Menu = Debug Overlay
+					{ index: 9, action: clickStartable }, // Start/Menu = Click .startable button
 				];
 
 				for (const mapping of buttonMappings) {
@@ -3252,46 +3263,36 @@
 				updateTurboIndicator();
 			}
 
-			function toggleTraction() {
+			// Combined assist toggle - enables/disables all stability features together
+			let assistMode = false;
+
+			function toggleAssist() {
 				if (!isConnected) return;
-				tractionMode = !tractionMode;
+				assistMode = !assistMode;
+				// Set all stability features to the same state
+				tractionMode = assistMode;
+				stabilityMode = assistMode;
+				absMode = assistMode;
+				hillHoldMode = assistMode;
+				coastMode = assistMode;
+				surfaceAdaptMode = assistMode;
+				// Send all feature states
 				tractionFeature.send(tractionMode);
-				updateTractionIndicator();
-			}
-
-			function toggleStability() {
-				if (!isConnected) return;
-				stabilityMode = !stabilityMode;
 				stabilityFeature.send(stabilityMode);
-				updateStabilityIndicator();
-			}
-
-			function toggleAbs() {
-				if (!isConnected) return;
-				absMode = !absMode;
 				absFeature.send(absMode);
-				updateAbsIndicator();
-			}
-
-			function toggleHillHold() {
-				if (!isConnected) return;
-				hillHoldMode = !hillHoldMode;
 				hillHoldFeature.send(hillHoldMode);
-				updateHillHoldIndicator();
-			}
-
-			function toggleCoast() {
-				if (!isConnected) return;
-				coastMode = !coastMode;
 				coastFeature.send(coastMode);
-				updateCoastIndicator();
+				surfaceFeature.send(surfaceAdaptMode);
+				updateAssistIndicator();
 			}
 
-			function toggleSurface() {
-				if (!isConnected) return;
-				surfaceAdaptMode = !surfaceAdaptMode;
-				surfaceFeature.send(surfaceAdaptMode);
-				updateSurfaceIndicator();
+			function updateAssistIndicator() {
+				const btn = document.getElementById('assist-btn');
+				if (assistMode) {
+					btn.classList.add('active');
+				} else {
+					btn.classList.remove('active');
+				}
 			}
 
 			function toggleHeadlight() {
@@ -3302,6 +3303,19 @@
 					view.setUint8(3, headlightMode ? 1 : 0);
 					controlChannel.send(buf);
 					console.log('Sent headlight:', headlightMode);
+				}
+				updateHeadlightIndicator();
+			}
+
+			function updateHeadlightIndicator() {
+				const indicator = document.getElementById('headlight-status');
+				const icon = document.getElementById('headlight-icon');
+				if (headlightMode) {
+					indicator.classList.add('on');
+					icon.src = 'icons/headlight_on.svg';
+				} else {
+					indicator.classList.remove('on');
+					icon.src = 'icons/headlight_off.svg';
 				}
 			}
 
@@ -3722,6 +3736,14 @@
 					overlay.classList.add('active');
 				} else {
 					overlay.classList.remove('active');
+				}
+			}
+
+			// Click the first visible .startable button (for gamepad Start button navigation flow)
+			function clickStartable() {
+				const btn = document.querySelector('.startable:not(.hidden):not([disabled])');
+				if (btn) {
+					btn.click();
 				}
 			}
 
@@ -4325,28 +4347,13 @@
 					toggleTurbo();
 					e.preventDefault();
 				} else if (e.code === 'KeyQ' && !e.repeat) {
-					toggleTraction();
-					e.preventDefault();
-				} else if (e.code === 'KeyR' && !e.repeat) {
-					toggleStability();
+					toggleAssist();
 					e.preventDefault();
 				} else if (e.code === 'KeyC' && !e.repeat) {
 					toggleDebugOverlay();
 					e.preventDefault();
 				} else if (e.code === 'KeyH' && !e.repeat) {
 					toggleHeadlight();
-					e.preventDefault();
-				} else if (e.code === 'KeyB' && !e.repeat) {
-					toggleAbs();
-					e.preventDefault();
-				} else if (e.code === 'KeyG' && !e.repeat) {
-					toggleHillHold();
-					e.preventDefault();
-				} else if (e.code === 'KeyN' && !e.repeat) {
-					toggleCoast();
-					e.preventDefault();
-				} else if (e.code === 'KeyF' && !e.repeat) {
-					toggleSurface();
 					e.preventDefault();
 				}
 			});
@@ -4387,6 +4394,7 @@
 				gamepadIndex = e.gamepad.index;
 				gamepadConnected = true;
 				document.body.classList.add('gamepad-connected');
+				updateButtonLabels(true);
 			});
 
 			window.addEventListener('gamepaddisconnected', (e) => {
@@ -4396,8 +4404,18 @@
 					gamepadConnected = false;
 					prevGamepadButtons = {};
 					document.body.classList.remove('gamepad-connected');
+					updateButtonLabels(false);
 				}
 			});
+
+			// Update control button labels for keyboard vs gamepad mode
+			function updateButtonLabels(gamepadMode) {
+				const buttons = document.querySelectorAll('#control-buttons-container .control-btn');
+				buttons.forEach((btn) => {
+					const label = gamepadMode ? btn.dataset.gp : btn.dataset.kb;
+					if (label) btn.textContent = label;
+				});
+			}
 
 			// Initialize thumbs position
 			updateThumbs();
