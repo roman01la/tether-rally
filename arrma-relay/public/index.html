@@ -1539,7 +1539,7 @@
 			</div>
 
 			<div id="instructions">
-				🎮 Gamepad: RT=Gas LT=Brake LStick=Steer A/B/X/Y=Turbo/TC/ESC/ABS | ⌨️ WASD/Arrows | E=Turbo Q=TC R=ESC B=ABS G=Hill N=Coast F=Surface H=Light C=Debug
+				🎮 RT/LT=Gas/Brake LStick=Steer | ⌨️ WASD | E=Turbo Q=TC R=ESC B=ABS G=Hill N=Coast F=Surf H=Light C=Debug
 			</div>
 
 			<!-- Control Buttons -->
@@ -2260,6 +2260,7 @@
 
 				if (hasInput) {
 					// Update throttle and steering from gamepad
+					// thrSlider tracks UI thumb position, thr is the actual sent value
 					thrSlider = gpThrottle;
 					thr = gpThrottle;
 					str = gpSteering;
@@ -2267,6 +2268,8 @@
 				}
 
 				// Handle button presses for feature toggles (edge detection - only on press)
+				// Button handling is intentionally separate from movement input - buttons should
+				// always be processed even when the sticks/triggers are centered
 				const buttonMappings = [
 					{ index: 0, action: toggleTurbo },      // A = Turbo
 					{ index: 1, action: toggleTraction },   // B = Traction Control
