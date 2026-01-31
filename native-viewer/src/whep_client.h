@@ -60,6 +60,7 @@ struct WHEPStats {
     int packets_received = 0;
     int packets_lost = 0;
     int64_t bytes_received = 0;
+    int frames_received = 0;  // Decoded video frames
 };
 
 /**

@@ -336,7 +336,7 @@ private:
                 }
                 
                 // Update stats
-                stats_.frames_received_++;
+                stats_.frames_received++;
                 if (frame_num % 60 == 0) {
                     stats_.bitrate_kbps = 2000;  // Simulated 2 Mbps
                     stats_.rtt_ms = 50;          // Simulated 50ms RTT

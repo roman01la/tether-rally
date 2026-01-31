@@ -23,11 +23,12 @@ brew install cmake ninja glfw curl
 
 This project requires libwebrtc for full WebRTC functionality. Without it, the viewer builds in **stub mode** which demonstrates the architecture but cannot receive real video streams.
 
-### Option 1: Use prebuilt binaries (recommended)
+### Option 1: Use prebuilt binaries
 
-Download prebuilt libwebrtc for macOS from:
-- https://github.com/aspect-build/aspect-build-aspect-cli/releases
-- Or build from source (see below)
+Prebuilt libwebrtc binaries for macOS can be difficult to find. Some options:
+- Search GitHub for "libwebrtc prebuilt macos"
+- Check the [aspect-build](https://github.com/aspect-build) organization for build tooling
+- Build from source (recommended for reliability)
 
 Extract and set `LIBWEBRTC_DIR` when building.
 

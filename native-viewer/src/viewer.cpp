@@ -257,17 +257,15 @@ ViewerStats Viewer::getStats() const {
 }
 
 void Viewer::toggleFullscreen() {
-    static int windowed_x, windowed_y, windowed_width, windowed_height;
-    
     if (glfwGetWindowMonitor(window_)) {
         // Currently fullscreen, switch to windowed
         glfwSetWindowMonitor(window_, nullptr, 
-                            windowed_x, windowed_y,
-                            windowed_width, windowed_height, 0);
+                            windowed_x_, windowed_y_,
+                            windowed_width_, windowed_height_, 0);
     } else {
         // Currently windowed, switch to fullscreen
-        glfwGetWindowPos(window_, &windowed_x, &windowed_y);
-        glfwGetWindowSize(window_, &windowed_width, &windowed_height);
+        glfwGetWindowPos(window_, &windowed_x_, &windowed_y_);
+        glfwGetWindowSize(window_, &windowed_width_, &windowed_height_);
         
         GLFWmonitor* monitor = glfwGetPrimaryMonitor();
         const GLFWvidmode* mode = glfwGetVideoMode(monitor);

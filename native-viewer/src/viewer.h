@@ -117,6 +117,12 @@ private:
     int fb_height_ = 0;
     bool show_stats_ = false;
     
+    // Windowed mode state (for fullscreen toggle)
+    int windowed_x_ = 0;
+    int windowed_y_ = 0;
+    int windowed_width_ = 0;
+    int windowed_height_ = 0;
+    
     // Components
     std::unique_ptr<WHEPClient> whep_client_;
     std::unique_ptr<Renderer> renderer_;
