@@ -7,11 +7,16 @@ forwards them to ESP32 via UDP on local network.
 
 Also provides an admin interface for race management.
 
+Configuration:
+    Tuning parameters loaded from car profile (pi-scripts/profiles/*.ini)
+    Set CAR_PROFILE environment variable to select profile:
+        export CAR_PROFILE=badlands_4kg
+    
 Dependencies:
     pip3 install aiortc aiohttp pyserial pynmea2
 
 Usage:
-    TOKEN_SECRET="your-secret" python3 control-relay.py
+    CAR_PROFILE=badlands_4kg TOKEN_SECRET="your-secret" python3 control-relay.py
 """
 
 import asyncio
@@ -32,6 +37,7 @@ from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from bno055_reader import BNO055
 from hall_rpm import HallRPM
+from car_config import get_config
 from low_speed_traction import LowSpeedTractionManager
 from yaw_rate_controller import YawRateController
 from slip_angle_watchdog import SlipAngleWatchdog
@@ -170,14 +176,17 @@ hill_hold_enabled = False    # Hill hold toggle
 coast_enabled = False        # Coast control toggle
 surface_adapt_enabled = False # Surface adaptation toggle
 
-# Heading blend parameters
-SPEED_THRESHOLD_LOW = 1.0   # km/h - below this, use IMU only
-SPEED_THRESHOLD_HIGH = 5.0  # km/h - above this, blend toward GPS
-HEADING_SMOOTHING = 0.15    # Low-pass filter alpha (0.1-0.3)
+# Load car configuration
+_cfg = get_config()
+
+# Heading blend parameters (from config)
+SPEED_THRESHOLD_LOW = _cfg.get_float('heading_blend', 'imu_only_speed_kmh')
+SPEED_THRESHOLD_HIGH = _cfg.get_float('heading_blend', 'gps_blend_speed_kmh')
+HEADING_SMOOTHING = _cfg.get_float('heading_blend', 'heading_smooth_alpha')
 
 # Hall sensor (wheel RPM) state
 HALL_GPIO_PIN = 22           # BCM GPIO pin for Hall sensor
-WHEEL_DIAMETER_MM = 118      # Wheel diameter in mm
+WHEEL_DIAMETER_MM = _cfg.get_int('vehicle', 'wheel_diameter_mm')
 
 # Headlight control
 HEADLIGHT_GPIO_PIN = 26      # BCM GPIO pin for headlight MOSFET (IRLZ44N)
@@ -189,14 +198,14 @@ fused_speed = 0.0            # Final fused speed (km/h)
 wheel_distance = 0.0         # Total distance from wheel (meters)
 race_start_pulse_count = 0   # Pulse count at race start (for distance reset)
 
-# Speed fusion parameters (improved: IMU-primary, GPS for drift correction only)
-SPEED_FUSION_ALPHA = 0.15    # Smoothing for speed transitions (lower = smoother)
-IMU_SPEED_INTEGRATE_RATE = 0.8  # How much to trust IMU integration per cycle
-GPS_DRIFT_CORRECTION_ALPHA = 0.25  # GPS drift correction (25% per cycle)
-GPS_DRIFT_CORRECTION_MIN_SPEED = 5.0  # km/h - only correct above this speed
-WHEELSPIN_DETECT_RATIO = 1.5  # If wheel > GPS * this ratio for sustained time = wheelspin
-WHEELSPIN_DETECT_TIME = 0.3   # Seconds of sustained mismatch to detect wheelspin
-WHEELSPIN_MAX_FUSED_RATIO = 1.2  # Cap fused speed to GPS * this during suspected wheelspin
+# Speed fusion parameters (from config)
+SPEED_FUSION_ALPHA = _cfg.get_float('speed_fusion', 'fusion_alpha')
+IMU_SPEED_INTEGRATE_RATE = _cfg.get_float('speed_fusion', 'imu_integrate_rate')
+GPS_DRIFT_CORRECTION_ALPHA = _cfg.get_float('speed_fusion', 'gps_drift_correction_alpha')
+GPS_DRIFT_CORRECTION_MIN_SPEED = _cfg.get_float('speed_fusion', 'gps_drift_correction_min_speed_kmh')
+WHEELSPIN_DETECT_RATIO = _cfg.get_float('speed_fusion', 'wheelspin_detect_ratio')
+WHEELSPIN_DETECT_TIME = _cfg.get_float('speed_fusion', 'wheelspin_detect_time_s')
+WHEELSPIN_MAX_FUSED_RATIO = _cfg.get_float('speed_fusion', 'wheelspin_max_fused_ratio')
 
 # Speed fusion state
 imu_integrated_speed = 0.0   # Speed from IMU forward accel integration (km/h)
@@ -205,14 +214,13 @@ wheelspin_start_time = 0.0   # When wheelspin was first suspected
 wheelspin_active = False     # Currently detecting wheelspin
 
 # Stationary decay (prevent IMU drift when stopped)
-STATIONARY_TIMEOUT = 3.0     # Seconds wheel must be stopped before decay kicks in
-STATIONARY_DECAY_RATE = 0.5  # Decay speed by 50% per second when stationary
-IMU_ACCEL_NOISE_THRESHOLD = 0.3  # m/s² - ignore accelerations below this
+STATIONARY_TIMEOUT = _cfg.get_float('speed_fusion', 'stationary_timeout_s')
+STATIONARY_DECAY_RATE = _cfg.get_float('speed_fusion', 'stationary_decay_rate')
+IMU_ACCEL_NOISE_THRESHOLD = _cfg.get_float('speed_fusion', 'imu_accel_noise_threshold')
 wheel_stopped_since = 0.0    # Timestamp when wheel stopped
 
-# IMU mount offset (degrees to ADD to raw IMU heading to align with car forward)
-# If car points 291° but IMU reads 282°, offset = 291 - 282 = +9
-IMU_MOUNT_OFFSET = 9.0
+# IMU mount offset (from config)
+IMU_MOUNT_OFFSET = _cfg.get_float('heading_blend', 'imu_mount_offset_deg')
 
 # Race state: "idle" (controls blocked), "countdown" (controls blocked), "racing" (controls allowed)
 race_state = "idle"

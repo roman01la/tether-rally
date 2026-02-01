@@ -274,6 +274,10 @@ cat > ~/.env << 'EOF'
 TOKEN_SECRET=your-secret-key-here
 TURN_KEY_ID=your-turn-key-id
 TURN_KEY_API_TOKEN=your-turn-api-token
+
+# Car profile (optional - default is badlands_4kg)
+# Available profiles: badlands_4kg, ragnarok_stock
+# CAR_PROFILE=ragnarok_stock
 EOF
 chmod 600 ~/.env
 ```
@@ -333,10 +337,22 @@ sudo systemctl enable --now mediamtx
 
 #### Control Relay Service Setup
 
+The easiest way to deploy is using the deploy script:
+
+```bash
+# From your development machine (deploys code, profiles, and service)
+./pi-scripts/deploy.sh
+```
+
+Or manually:
+
 ```bash
 # Copy scripts to Pi
 scp pi-scripts/*.py pi@your-pi:~/
 scp pi-scripts/control-relay.service pi@your-pi:~/
+
+# Copy profile configs
+scp -r pi-scripts/profiles pi@your-pi:~/
 
 # On Pi: Install service
 sudo mv ~/control-relay.service /etc/systemd/system/
@@ -347,6 +363,50 @@ sudo systemctl enable --now control-relay
 sudo systemctl status control-relay
 journalctl -u control-relay -f
 ```
+
+#### Car Profile Configuration
+
+All vehicle tuning parameters are stored in profile INI files. This allows different configurations for different tire/weight setups.
+
+**Available profiles:**
+- `badlands_4kg` - Horizon Hobby Badlands MX38 HP tires (130mm) with 4.2kg weight (default)
+- `ragnarok_stock` - Stock Ragnarok tires (110mm) with 4.2kg weight
+
+**Profile location:** `~/profiles/*.ini` on the Pi
+
+**Selecting a profile:**
+
+The default profile is set in the systemd service (`badlands_4kg`). To use a different profile:
+
+```bash
+# Option 1: Add to ~/.env (recommended)
+echo 'CAR_PROFILE=ragnarok_stock' >> ~/.env
+sudo systemctl restart control-relay
+
+# Option 2: Edit service file directly
+sudo systemctl edit control-relay
+# Add: Environment=CAR_PROFILE=ragnarok_stock
+```
+
+**Creating a custom profile:**
+
+```bash
+# Copy an existing profile as a starting point
+cp ~/profiles/badlands_4kg.ini ~/profiles/my_setup.ini
+
+# Edit with your values
+nano ~/profiles/my_setup.ini
+
+# Set in environment
+echo 'CAR_PROFILE=my_setup' >> ~/.env
+sudo systemctl restart control-relay
+```
+
+Profile parameters are documented with inline comments. Key sections include:
+- `[vehicle]` - Wheel diameter, weight, wheelbase (MUST match hardware)
+- `[low_speed_traction]` - Launch control and slip thresholds
+- `[yaw_rate_controller]` - Oversteer/understeer detection
+- `[steering_shaper]` - Latency-aware steering limits
 
 ### 5. Token Generator
 
@@ -492,10 +552,11 @@ Calibration status is shown in the debug overlay (C key):
 
 ### Hall Sensor Wheel Calibration
 
-Update wheel diameter in `pi-scripts/control-relay.py`:
+Update wheel diameter in your car profile (`~/profiles/*.ini`):
 
-```python
-WHEEL_DIAMETER_MM = 118  # Measure your actual wheel diameter
+```ini
+[vehicle]
+wheel_diameter_mm = 130  # Measure your actual wheel diameter
 ```
 
 The hall sensor should trigger once per wheel rotation. Mount the magnet on the wheel hub and position the sensor 2-3mm from the magnet path.

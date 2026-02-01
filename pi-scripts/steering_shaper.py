@@ -26,6 +26,7 @@ Usage:
 
 import time
 import math
+from car_config import get_config
 
 
 class SteeringShaper:
@@ -36,53 +37,29 @@ class SteeringShaper:
     """
 
     def __init__(self):
+        # Load config from car profile
+        cfg = get_config()
+        
         # === Speed-Based Steering Limit ===
-        
-        # Steering range at low speed (fraction of full, 0-1)
-        self.steering_limit_low_speed = 1.0    # 100% at low speed
-        
-        # Steering range at high speed (fraction of full, 0-1)
-        self.steering_limit_high_speed = 0.5   # 50% at high speed (was 40%, more fun)
-        
-        # Speed thresholds for interpolation (km/h)
-        self.limit_speed_low = 8.0    # Below this: full steering (raised)
-        self.limit_speed_high = 40.0  # Above this: minimum steering (raised)
+        self.steering_limit_low_speed = cfg.get_float('steering_shaper', 'max_steering_ratio')
+        self.steering_limit_high_speed = cfg.get_float('steering_shaper', 'min_steering_ratio')
+        self.limit_speed_low = cfg.get_float('steering_shaper', 'low_speed_kmh')
+        self.limit_speed_high = cfg.get_float('steering_shaper', 'high_speed_kmh')
         
         # === Rate Limiting ===
-        
-        # Max steering change per second (in steering units, full range is ~65534)
-        # At 50Hz, this is max_rate / 50 per update
-        # 300000/sec = full sweep in ~0.2s - very responsive
-        self.max_steering_rate = 300000  # units/sec (faster for responsive feel)
-        
-        # Faster rate limit for returning toward center (feels more natural)
-        self.max_center_rate = 400000    # units/sec (faster return to center)
+        self.max_steering_rate = cfg.get_int('steering_shaper', 'max_rate')
+        self.max_center_rate = cfg.get_int('steering_shaper', 'center_rate')
         
         # === Counter-Steer Assist ===
-        
-        # Enable/disable counter-steer assist
-        self.counter_steer_enabled = True
-        
-        # Minimum yaw rate (deg/s) to trigger assist
-        self.counter_steer_yaw_threshold = 20.0
-        
-        # Assist strength (0-1, fraction of "ideal" counter-steer)
-        # 0.10 = 10% assist, very subtle - just a hint
-        self.counter_steer_strength = 0.10
-        
-        # Only assist when input is near neutral (abs < this)
-        self.neutral_threshold = 5000  # ~15% of full int16 range
-        
-        # Minimum speed for counter-steer assist
-        self.counter_steer_min_speed = 10.0  # km/h (raised)
-        
-        # Max counter-steer assist (prevents over-correction)
-        self.max_counter_steer = 5000  # ~15% of full int16 range
+        self.counter_steer_enabled = cfg.get_bool('steering_shaper', 'counter_steer_enabled')
+        self.counter_steer_yaw_threshold = cfg.get_float('steering_shaper', 'counter_steer_min_yaw')
+        self.counter_steer_strength = cfg.get_float('steering_shaper', 'counter_steer_strength')
+        self.neutral_threshold = cfg.get_int('steering_shaper', 'counter_steer_max_input')
+        self.counter_steer_min_speed = cfg.get_float('steering_shaper', 'counter_steer_min_speed_kmh')
+        self.max_counter_steer = cfg.get_int('steering_shaper', 'counter_steer_max_amount')
         
         # === Smoothing ===
-        
-        # Light smoothing on output (reduces jitter)
-        self.output_smoothing = 0.7  # Higher = more responsive
+        self.output_smoothing = cfg.get_float('steering_shaper', 'smoothing_alpha')
         
         # === State ===
         

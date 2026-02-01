@@ -38,6 +38,7 @@ Usage:
 
 import time
 import math
+from car_config import get_config
 
 
 class YawRateController:
@@ -54,53 +55,35 @@ class YawRateController:
 
         Args:
             wheelbase_m: Vehicle wheelbase in meters (wheel center to wheel center).
-                         ARRMA Big Rock 3S wheelbase ≈ 320mm = 0.32m
+                         If None, loaded from car profile.
         """
+        # Load config from car profile
+        cfg = get_config()
+        
         # === Vehicle Parameters ===
-        self.wheelbase = wheelbase_m
-
-        # Max steering angle (degrees) at full servo deflection (±1000)
-        # Typical 1:10 scale: ~30–35 degrees
-        self.max_steering_angle_deg = 30.0
-
-        # Understeer coefficient: real yaw rate vs kinematic ideal
-        # Bicycle model assumes perfect grip; real cars slip.
-        # Monster truck on loose surface: ~0.3–0.4
-        # Grippy track: ~0.5–0.7
-        self.grip_factor = 0.35
+        self.wheelbase = wheelbase_m if wheelbase_m is not None else cfg.get_float('vehicle', 'wheelbase_m')
+        self.max_steering_angle_deg = cfg.get_float('vehicle', 'max_steering_angle_deg')
+        
+        # Grip factor: real yaw rate vs kinematic ideal
+        self.grip_factor = cfg.get_float('yaw_rate_controller', 'grip_factor')
 
         # === Thresholds & Gains ===
-
-        # Minimum speed (km/h) for stability control to engage
-        # Below this, turning in place or very slow maneuvers - don't intervene
-        self.min_speed_kmh = 5.0
-
-        # Yaw error thresholds (deg/s)
-        # Error = r_des - r_actual
-        # Positive error: understeering (car not rotating enough)
-        # Negative error: oversteering (car rotating too much)
-        self.oversteer_threshold = 35.0   # deg/s over desired = oversteer (raised for fun)
-        self.understeer_threshold = 25.0  # deg/s under desired = understeer (raised)
-
-        # Throttle cut rates (per update cycle at 20Hz)
-        # Soft ramp: 0.025/update = 0.5/sec = 400ms to 50%
-        self.oversteer_cut_rate = 0.025     # Soft ramp on oversteer
-        self.understeer_cut_rate = 0.015    # Very mild on understeer
-
-        # Minimum throttle multiplier (never cut below this)
-        self.min_throttle_mult = 0.50       # 50% floor - keep some power
-
-        # Recovery rate (per update) - fast recovery feels better
-        self.recovery_rate = 0.05           # ~400ms full recovery
-        self.fast_recovery_rate = 0.10      # ~200ms when clearly stable
-
-        # Virtual brake: additional braking on severe oversteer
-        self.virtual_brake_enabled = True
-        self.virtual_brake_threshold = 50.0  # deg/s error triggers brake
-        self.max_virtual_brake = 400         # Max brake command (0-1000)
-
-        # Smoothing for yaw rate (reduce noise)
-        self.yaw_rate_smoothing = 0.4       # EMA alpha
+        self.min_speed_kmh = cfg.get_float('yaw_rate_controller', 'min_speed_kmh')
+        self.oversteer_threshold = cfg.get_float('yaw_rate_controller', 'oversteer_threshold')
+        self.understeer_threshold = cfg.get_float('yaw_rate_controller', 'understeer_threshold')
+        self.oversteer_cut_rate = cfg.get_float('yaw_rate_controller', 'oversteer_cut_rate')
+        self.understeer_cut_rate = cfg.get_float('yaw_rate_controller', 'understeer_cut_rate')
+        self.min_throttle_mult = cfg.get_float('yaw_rate_controller', 'min_throttle_mult')
+        self.recovery_rate = cfg.get_float('yaw_rate_controller', 'recovery_rate')
+        self.fast_recovery_rate = cfg.get_float('yaw_rate_controller', 'fast_recovery_rate')
+        
+        # Virtual brake
+        self.virtual_brake_enabled = cfg.get_bool('yaw_rate_controller', 'virtual_brake_enabled')
+        self.virtual_brake_threshold = cfg.get_float('yaw_rate_controller', 'virtual_brake_threshold')
+        self.max_virtual_brake = cfg.get_int('yaw_rate_controller', 'max_virtual_brake')
+        
+        # Smoothing
+        self.yaw_rate_smoothing = cfg.get_float('yaw_rate_controller', 'yaw_smoothing')
 
         # === State ===
         self._throttle_multiplier = 1.0

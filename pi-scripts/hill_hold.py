@@ -34,6 +34,7 @@ Usage:
 """
 
 import time
+from car_config import get_config
 
 
 class HillHold:
@@ -48,19 +49,22 @@ class HillHold:
     """
     
     def __init__(self):
+        # Load config from car profile
+        cfg = get_config()
+        
         # === Detection Thresholds ===
-        self.PITCH_THRESHOLD_DEG = 5.0      # Minimum incline to activate (degrees)
-        self.SPEED_THRESHOLD_KMH = 2.0      # Must be nearly stopped (km/h)
-        self.THROTTLE_DEADZONE = 100        # Ignore throttle below this
+        self.PITCH_THRESHOLD_DEG = cfg.get_float('hill_hold', 'pitch_threshold_deg')
+        self.SPEED_THRESHOLD_KMH = cfg.get_float('hill_hold', 'speed_threshold_kmh')
+        self.THROTTLE_DEADZONE = cfg.get_int('hill_hold', 'throttle_deadzone')
         
         # === Hold Parameters ===
-        self.HOLD_STRENGTH = 25             # Throttle units per degree of pitch
-        self.MAX_HOLD_FORCE = 400           # Maximum hold throttle (clamp)
+        self.HOLD_STRENGTH = cfg.get_int('hill_hold', 'hold_strength')
+        self.MAX_HOLD_FORCE = cfg.get_int('hill_hold', 'max_hold_force')
         
         # === Release Parameters ===
-        self.IMMEDIATE_RELEASE_THRESHOLD = 300  # Throttle above this = immediate release
-        self.BLEND_RATE = 0.15              # Blend speed (0-1 per update cycle)
-        self.TIMEOUT_SECONDS = 30.0         # Auto-release after this long
+        self.IMMEDIATE_RELEASE_THRESHOLD = cfg.get_int('hill_hold', 'immediate_release_threshold')
+        self.BLEND_RATE = cfg.get_float('hill_hold', 'blend_rate')
+        self.TIMEOUT_SECONDS = cfg.get_float('hill_hold', 'timeout_s')
         
         # === State ===
         self._active = False

@@ -32,9 +32,14 @@ Usage:
         esc_state=esc_state,
         timestamp_ms=int(time.time() * 1000)
     )
+
+Configuration:
+    All tuning parameters loaded from car profile (pi-scripts/profiles/*.ini)
+    Set CAR_PROFILE environment variable to select profile.
 """
 
 import time
+from car_config import get_config
 
 
 class ThrottleStateTracker:
@@ -127,21 +132,24 @@ class ABSController:
     """
     
     def __init__(self):
+        # Load config from car profile
+        cfg = get_config()
+        
         # === Tuning Parameters ===
         
         # Slip detection
-        self.SLIP_THRESHOLD = 0.15          # 15% slip ratio triggers ABS
-        self.MIN_SPEED_KMH = 3.0            # Below this, ABS disabled
-        self.MIN_BRAKE_INPUT = 100          # Minimum brake input to consider
+        self.SLIP_THRESHOLD = cfg.get_float('abs', 'slip_threshold')
+        self.MIN_SPEED_KMH = cfg.get_float('abs', 'min_speed_kmh')
+        self.MIN_BRAKE_INPUT = cfg.get_int('abs', 'min_brake_input')
         
         # Direction detection
-        self.DIRECTION_HYSTERESIS = 1.0     # km/h - prevents direction flapping
-        self.ACCEL_DIRECTION_THRESHOLD = 0.5  # m/s² - for low-speed direction detection
+        self.DIRECTION_HYSTERESIS = cfg.get_float('abs', 'direction_hysteresis_kmh')
+        self.ACCEL_DIRECTION_THRESHOLD = cfg.get_float('abs', 'accel_direction_threshold')
         
         # ABS cycling
-        self.CYCLE_TIME_MS = 50             # ABS pulse period (20 Hz)
-        self.BRAKE_APPLY_RATIO = 0.6        # Brake pressure during "apply" phase
-        self.BRAKE_RELEASE_RATIO = 0.2      # Brake pressure during "release" phase
+        self.CYCLE_TIME_MS = cfg.get_int('abs', 'cycle_time_ms')
+        self.BRAKE_APPLY_RATIO = cfg.get_float('abs', 'brake_apply_ratio')
+        self.BRAKE_RELEASE_RATIO = cfg.get_float('abs', 'brake_release_ratio')
         
         # === State ===
         self._vehicle_direction = "stopped"  # "forward", "backward", "stopped"

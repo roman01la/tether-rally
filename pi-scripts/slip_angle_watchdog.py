@@ -49,6 +49,7 @@ Usage:
 
 import time
 import math
+from car_config import get_config
 
 
 class SlipAngleWatchdog:
@@ -63,41 +64,20 @@ class SlipAngleWatchdog:
     """
 
     def __init__(self):
+        # Load config from car profile
+        cfg = get_config()
+        
         # === Thresholds ===
-        
-        # Minimum speed (km/h) for watchdog to be active
-        # At very low speeds, lateral accel is noisy and less meaningful
-        self.min_speed_kmh = 5.0
-        
-        # Lateral acceleration excess threshold (m/s²) to trigger watchdog
-        # This is how much EXTRA lateral accel beyond expected indicates slip
-        # Typical cornering: 0.3-0.5g (~3-5 m/s²)
-        # Sliding/drifting: lateral accel much higher than turn rate would suggest
-        self.lateral_excess_threshold = 3.0  # m/s² excess triggers detection
-        
-        # Time (seconds) slip must persist before intervention
-        # Prevents reacting to brief transients - longer = more fun
-        self.slip_duration_threshold = 0.20  # 200ms - allow quick slides
-        
-        # Minimum throttle to consider intervention
-        # No point cutting throttle if already coasting
-        self.min_throttle_for_intervention = 300
+        self.min_speed_kmh = cfg.get_float('slip_angle_watchdog', 'min_speed_kmh')
+        self.lateral_excess_threshold = cfg.get_float('slip_angle_watchdog', 'lateral_excess_threshold')
+        self.slip_duration_threshold = cfg.get_float('slip_angle_watchdog', 'slip_duration_threshold_s')
+        self.min_throttle_for_intervention = cfg.get_int('slip_angle_watchdog', 'min_throttle_for_intervention')
         
         # === Throttle Control ===
-        
-        # Target throttle multiplier during slip recovery
-        # Not zero - we want "grip recovery" not "emergency stop"
-        self.recovery_target = 0.6  # 60% throttle during recovery
-        
-        # How fast to reduce throttle (per update, ~20Hz assumed)
-        # Soft ramp: 0.05/update = 1.0/sec = 1s to reach target from 100%
-        self.reduction_rate = 0.05
-        
-        # How fast to recover when slip ends - fast recovery feels better
-        self.recovery_rate = 0.08
-        
-        # Minimum multiplier (floor)
-        self.min_multiplier = 0.5  # 50% floor - keep some power
+        self.recovery_target = cfg.get_float('slip_angle_watchdog', 'recovery_target')
+        self.reduction_rate = cfg.get_float('slip_angle_watchdog', 'reduction_rate')
+        self.recovery_rate = cfg.get_float('slip_angle_watchdog', 'recovery_rate')
+        self.min_multiplier = cfg.get_float('slip_angle_watchdog', 'min_multiplier')
         
         # === State ===
         
@@ -108,7 +88,7 @@ class SlipAngleWatchdog:
         
         # Smoothed values (reduces noise)
         self._lateral_excess_smooth = 0.0
-        self.smoothing_alpha = 0.3
+        self.smoothing_alpha = cfg.get_float('slip_angle_watchdog', 'smoothing_alpha')
         
         # Diagnostics
         self.lateral_excess = 0.0      # Excess lateral accel (m/s²)

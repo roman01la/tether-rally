@@ -25,6 +25,7 @@ Usage:
 """
 
 import time
+from car_config import get_config
 
 
 class CoastControl:
@@ -36,18 +37,21 @@ class CoastControl:
     """
     
     def __init__(self):
+        # Load config from car profile
+        cfg = get_config()
+        
         # === Tuning Parameters ===
         
         # Release detection
-        self.RELEASE_FROM_THRESHOLD = 100   # Throttle was above this
-        self.RELEASE_TO_THRESHOLD = 50      # Throttle dropped below this
+        self.RELEASE_FROM_THRESHOLD = cfg.get_int('coast_control', 'release_threshold_high')
+        self.RELEASE_TO_THRESHOLD = cfg.get_int('coast_control', 'release_threshold_low')
         
         # Coast phase
-        self.COAST_DURATION = 0.3           # Seconds of coast assist
-        self.COAST_INITIAL_THROTTLE = 100   # Initial counter-throttle
+        self.COAST_DURATION = cfg.get_float('coast_control', 'coast_duration_s')
+        self.COAST_INITIAL_THROTTLE = cfg.get_int('coast_control', 'coast_throttle')
         
-        # Minimum speed for coast assist (don't assist at very low speed)
-        self.MIN_SPEED_KMH = 5.0
+        # Minimum speed for coast assist
+        self.MIN_SPEED_KMH = cfg.get_float('coast_control', 'min_speed_kmh')
         
         # === State ===
         self._last_throttle = 0

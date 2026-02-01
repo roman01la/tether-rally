@@ -44,6 +44,7 @@ Usage:
 
 import time
 import math
+from car_config import get_config
 
 
 class LowSpeedTractionManager:
@@ -60,31 +61,34 @@ class LowSpeedTractionManager:
     """
     
     def __init__(self):
+        # Load config from car profile
+        cfg = get_config()
+        
         # === Phase Boundaries ===
-        self.LAUNCH_PHASE_END = 5.0       # km/h
-        self.TRANSITION_PHASE_END = 15.0  # km/h
+        self.LAUNCH_PHASE_END = cfg.get_float('low_speed_traction', 'launch_phase_end_kmh')
+        self.TRANSITION_PHASE_END = cfg.get_float('low_speed_traction', 'transition_phase_end_kmh')
         
         # === Launch Phase Parameters (proactive) ===
-        self.LAUNCH_TARGET_SLIP = 0.10    # 10% slip is optimal for acceleration
-        self.LAUNCH_SLIP_TOLERANCE = 0.03 # ±3% around target
-        self.LAUNCH_MAX_THROTTLE_RATE = 50   # Max throttle increase per cycle
-        self.LAUNCH_THROTTLE_CEILING = 800   # Max throttle during launch (out of 1000)
-        self.LAUNCH_SLIP_HIGH_CUT = 0.8      # Throttle multiplier when slip too high
+        self.LAUNCH_TARGET_SLIP = cfg.get_float('low_speed_traction', 'launch_target_slip')
+        self.LAUNCH_SLIP_TOLERANCE = cfg.get_float('low_speed_traction', 'launch_slip_tolerance')
+        self.LAUNCH_MAX_THROTTLE_RATE = cfg.get_int('low_speed_traction', 'launch_max_throttle_rate')
+        self.LAUNCH_THROTTLE_CEILING = cfg.get_int('low_speed_traction', 'launch_throttle_ceiling')
+        self.LAUNCH_SLIP_HIGH_CUT = cfg.get_float('low_speed_traction', 'launch_slip_high_cut')
         
         # === Cruise Phase Parameters (reactive) ===
-        self.CRUISE_SLIP_THRESHOLD = 0.20    # 20% slip triggers intervention
-        self.CRUISE_THROTTLE_CUT_RATE = 0.05 # How fast to cut on slip
-        self.CRUISE_RECOVERY_RATE = 0.08     # How fast to recover
-        self.CRUISE_MIN_MULTIPLIER = 0.50    # Never cut below 50%
+        self.CRUISE_SLIP_THRESHOLD = cfg.get_float('low_speed_traction', 'cruise_slip_threshold')
+        self.CRUISE_THROTTLE_CUT_RATE = cfg.get_float('low_speed_traction', 'cruise_throttle_cut_rate')
+        self.CRUISE_RECOVERY_RATE = cfg.get_float('low_speed_traction', 'cruise_recovery_rate')
+        self.CRUISE_MIN_MULTIPLIER = cfg.get_float('low_speed_traction', 'cruise_min_multiplier')
         
         # === Shared Parameters ===
-        self.MIN_THROTTLE_FOR_SLIP = 100     # Minimum throttle to consider slip
-        self.YAW_RATE_THRESHOLD = 90.0       # deg/s - reduce sensitivity in tight turns
-        self.ACCEL_SMOOTHING = 0.3           # EMA alpha for acceleration
+        self.MIN_THROTTLE_FOR_SLIP = cfg.get_int('low_speed_traction', 'min_throttle_for_slip')
+        self.YAW_RATE_THRESHOLD = cfg.get_float('low_speed_traction', 'yaw_rate_threshold')
+        self.ACCEL_SMOOTHING = cfg.get_float('low_speed_traction', 'accel_smoothing')
         
         # === Ground Speed Estimation (IMU-primary) ===
-        self.GPS_DRIFT_CORRECTION_ALPHA = 0.01  # Very slow GPS correction
-        self.GPS_DRIFT_CORRECTION_MIN_SPEED = 5.0  # km/h
+        self.GPS_DRIFT_CORRECTION_ALPHA = cfg.get_float('low_speed_traction', 'gps_drift_correction_alpha')
+        self.GPS_DRIFT_CORRECTION_MIN_SPEED = cfg.get_float('low_speed_traction', 'gps_drift_correction_min_speed_kmh')
         
         # === State ===
         self._phase = "launch"

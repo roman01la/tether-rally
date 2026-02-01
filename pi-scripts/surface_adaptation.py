@@ -44,6 +44,7 @@ Usage:
 
 import time
 import math
+from car_config import get_config
 
 
 class SurfaceAdaptation:
@@ -61,22 +62,24 @@ class SurfaceAdaptation:
     """
     
     def __init__(self):
-        # === Measurement Conditions ===
-        self.MIN_SPEED_KMH = 10.0           # Only measure above this speed
-        self.MIN_STEERING = 200             # Minimum steering input (out of 1000 or 32767)
-        self.MIN_SAMPLES = 10               # Minimum samples before outputting estimate
+        # Load config from car profile
+        cfg = get_config()
         
-        # === Vehicle Parameters ===
-        # ARRMA Big Rock 3S approximate parameters
-        self.WHEELBASE_M = 0.32             # Wheelbase in meters
-        self.MAX_STEERING_ANGLE_DEG = 30.0  # Max steering angle at full lock
+        # === Measurement Conditions ===
+        self.MIN_SPEED_KMH = cfg.get_float('surface_adaptation', 'min_speed_kmh')
+        self.MIN_STEERING = cfg.get_int('surface_adaptation', 'min_steering')
+        self.MIN_SAMPLES = cfg.get_int('surface_adaptation', 'min_samples')
+        
+        # === Vehicle Parameters (from vehicle section) ===
+        self.WHEELBASE_M = cfg.get_float('vehicle', 'wheelbase_m')
+        self.MAX_STEERING_ANGLE_DEG = cfg.get_float('vehicle', 'max_steering_angle_deg')
         
         # === Grip Estimation ===
-        self.DEFAULT_GRIP = 0.7             # Starting assumption (medium grip)
-        self.GRIP_SMOOTHING = 0.05          # EMA alpha for grip updates (slow)
-        self.GRIP_MIN = 0.2                 # Minimum estimated grip
-        self.GRIP_MAX = 1.2                 # Maximum estimated grip (>1 = very grippy)
-        self.HISTORY_SIZE = 50              # Rolling average window
+        self.DEFAULT_GRIP = cfg.get_float('surface_adaptation', 'default_grip')
+        self.GRIP_SMOOTHING = cfg.get_float('surface_adaptation', 'grip_smoothing')
+        self.GRIP_MIN = cfg.get_float('surface_adaptation', 'grip_min')
+        self.GRIP_MAX = cfg.get_float('surface_adaptation', 'grip_max')
+        self.HISTORY_SIZE = cfg.get_int('surface_adaptation', 'history_size')
         
         # === State ===
         self._estimated_grip = self.DEFAULT_GRIP
