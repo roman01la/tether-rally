@@ -112,6 +112,10 @@ udp_sock.setblocking(False)
 pc = None
 control_channel = None  # Primary browser control channel
 data_channels = []  # All connected data channels (for telemetry broadcast)
+
+def is_connected():
+    """Check if any client is connected via data channel"""
+    return len(data_channels) > 0
 video_connected = False  # Reported by browser
 player_ready = False     # Player clicked Ready button
 
@@ -188,7 +192,7 @@ race_start_pulse_count = 0   # Pulse count at race start (for distance reset)
 # Speed fusion parameters (improved: IMU-primary, GPS for drift correction only)
 SPEED_FUSION_ALPHA = 0.15    # Smoothing for speed transitions (lower = smoother)
 IMU_SPEED_INTEGRATE_RATE = 0.8  # How much to trust IMU integration per cycle
-GPS_DRIFT_CORRECTION_ALPHA = 0.05  # Very slow GPS drift correction (5% per cycle)
+GPS_DRIFT_CORRECTION_ALPHA = 0.25  # GPS drift correction (25% per cycle)
 GPS_DRIFT_CORRECTION_MIN_SPEED = 5.0  # km/h - only correct above this speed
 WHEELSPIN_DETECT_RATIO = 1.5  # If wheel > GPS * this ratio for sustained time = wheelspin
 WHEELSPIN_DETECT_TIME = 0.3   # Seconds of sustained mismatch to detect wheelspin
@@ -199,6 +203,12 @@ imu_integrated_speed = 0.0   # Speed from IMU forward accel integration (km/h)
 last_speed_fusion_time = 0.0
 wheelspin_start_time = 0.0   # When wheelspin was first suspected
 wheelspin_active = False     # Currently detecting wheelspin
+
+# Stationary decay (prevent IMU drift when stopped)
+STATIONARY_TIMEOUT = 3.0     # Seconds wheel must be stopped before decay kicks in
+STATIONARY_DECAY_RATE = 0.5  # Decay speed by 50% per second when stationary
+IMU_ACCEL_NOISE_THRESHOLD = 0.3  # m/s² - ignore accelerations below this
+wheel_stopped_since = 0.0    # Timestamp when wheel stopped
 
 # IMU mount offset (degrees to ADD to raw IMU heading to align with car forward)
 # If car points 291° but IMU reads 282°, offset = 291 - 282 = +9
@@ -215,9 +225,12 @@ headlight_on = False   # Headlight state (controlled via GPIO 26)
 # ----- WiFi Signal Monitoring -----
 
 def get_wireless_interface():
-    """Detect the wireless interface name by parsing /proc/net/wireless.
+    """Detect the active wireless interface (the one with a connection/ESSID).
+    With multiple adapters, we need to find the one actually connected.
     Returns interface name (e.g., 'wlan0') or None if not found.
     """
+    # Get all wireless interfaces from /proc/net/wireless
+    interfaces = []
     try:
         with open('/proc/net/wireless', 'r') as f:
             lines = f.readlines()
@@ -228,20 +241,44 @@ def get_wireless_interface():
                 if len(parts) >= 1:
                     interface = parts[0].strip()
                     if interface:
-                        return interface
+                        interfaces.append(interface)
     except Exception as e:
         logger.debug(f"Error reading /proc/net/wireless: {e}")
     
     # Fallback: try common interface names
-    for iface in ['wlan0', 'wlan1', 'wlp2s0', 'wlp3s0']:
+    if not interfaces:
+        for iface in ['wlan0', 'wlan1', 'wlp2s0', 'wlp3s0']:
+            try:
+                result = subprocess.run(['iwconfig', iface], capture_output=True, text=True, timeout=2)
+                if 'no wireless extensions' not in result.stderr:
+                    interfaces.append(iface)
+            except Exception:
+                pass
+    
+    if not interfaces:
+        return None
+    
+    # If only one interface, use it
+    if len(interfaces) == 1:
+        return interfaces[0]
+    
+    # Multiple interfaces: find the one that's actually connected (has ESSID)
+    for iface in interfaces:
         try:
             result = subprocess.run(['iwconfig', iface], capture_output=True, text=True, timeout=2)
-            if 'no wireless extensions' not in result.stderr:
+            output = result.stdout
+            # Check if interface has an ESSID (connected to a network)
+            # Connected: ESSID:"NetworkName"
+            # Not connected: ESSID:off/any
+            if 'ESSID:"' in output and 'ESSID:off' not in output:
+                logger.info(f"Found active wireless interface: {iface} (connected)")
                 return iface
         except Exception:
             pass
     
-    return None
+    # No connected interface found, return first one as fallback
+    logger.warning(f"No connected wireless interface found, using {interfaces[0]}")
+    return interfaces[0]
 
 def get_wifi_signal():
     """Get WiFi signal strength and link quality from Pi's wireless interface.
@@ -773,10 +810,15 @@ async def imu_reader_loop():
                 imu_forward_accel = lin_accel[1]
                 imu_lateral_accel = -lin_accel[0]  # Negate for upside-down mount
             
-            # Read pitch for hill hold (upside-down mount negates pitch)
+            # Read pitch for hill hold (upside-down mount transforms pitch)
             pitch = bno.read_pitch()
             if pitch is not None:
-                imu_pitch = -pitch  # Negate for upside-down mount
+                # For upside-down mount: convert ±180° (flat) to 0°
+                # Formula: actual = sign(pitch) * (180 - abs(pitch))
+                if pitch >= 0:
+                    imu_pitch = 180 - pitch
+                else:
+                    imu_pitch = -180 - pitch
             
             imu_calibration = bno.read_calibration()
             
@@ -932,21 +974,39 @@ def fuse_speed():
     
     # === Step 1: Integrate IMU forward acceleration ===
     # This gives us fast response to acceleration/braking
-    # Convert m/s² to km/h change: (m/s² * dt) * 3.6 = km/h
-    accel_delta_kmh = imu_forward_accel * dt * 3.6
-    imu_integrated_speed += accel_delta_kmh
-    imu_integrated_speed = max(0, imu_integrated_speed)  # Can't go negative
+    # Only integrate when connected to prevent drift accumulation during disconnect
+    if is_connected():
+        # Convert m/s² to km/h change: (m/s² * dt) * 3.6 = km/h
+        accel_delta_kmh = imu_forward_accel * dt * 3.6
+        imu_integrated_speed += accel_delta_kmh
+        imu_integrated_speed = max(0, imu_integrated_speed)  # Can't go negative
     
     # === Step 2: Blend IMU integration with wheel speed ===
     # Wheel speed is our primary source (real-time)
     # IMU integration helps during rapid changes
+    global wheel_stopped_since
+    
     if wheel_speed > 0.5:
         # Wheel is turning - use wheel as primary, IMU for smoothing
         # This helps when wheel has momentary dropouts
         primary_speed = wheel_speed * 0.7 + imu_integrated_speed * 0.3
+        wheel_stopped_since = 0  # Reset stationary timer
     else:
-        # Wheel stopped or very slow - trust IMU integration
-        # (handles coasting with wheel not turning due to sensor issues)
+        # Wheel stopped or very slow
+        # Track how long wheel has been stopped
+        if wheel_stopped_since == 0:
+            wheel_stopped_since = now
+        
+        stationary_duration = now - wheel_stopped_since
+        
+        # If stopped for > 3 seconds with no significant acceleration, decay speed
+        if stationary_duration > STATIONARY_TIMEOUT and abs(imu_forward_accel) < IMU_ACCEL_NOISE_THRESHOLD:
+            # Decay IMU integrated speed toward zero
+            decay_factor = STATIONARY_DECAY_RATE * dt
+            imu_integrated_speed *= max(0, 1 - decay_factor)
+            if imu_integrated_speed < 0.5:
+                imu_integrated_speed = 0
+        
         primary_speed = imu_integrated_speed
     
     # === Step 3: Wheelspin detection (Priority 3) ===
@@ -1189,8 +1249,19 @@ async def handle_offer(request):
     @pc.on("datachannel")
     def on_datachannel(channel):
         global control_channel, data_channels
+        global imu_integrated_speed, fused_speed, wheel_speed
+        
+        # Reset speed variables on reconnect (when first client connects)
+        was_disconnected = len(data_channels) == 0
         control_channel = channel
         data_channels.append(channel)  # Track for telemetry broadcast
+        
+        if was_disconnected:
+            imu_integrated_speed = 0.0
+            fused_speed = 0.0
+            wheel_speed = 0.0
+            logger.info("Speed reset: reconnect")
+        
         logger.info(f"DataChannel '{channel.label}' opened (total: {len(data_channels)})")
         
         # Send current config to new client
@@ -1677,12 +1748,18 @@ def send_race_state():
 async def countdown_to_racing():
     """Wait 3 seconds then enable controls"""
     global race_state, race_start_time, race_start_pulse_count, hall_sensor
+    global imu_integrated_speed, fused_speed, wheel_speed
     await asyncio.sleep(3.0)
     race_state = "racing"
     race_start_time = time.time()
     # Reset wheel distance tracking
     if hall_sensor:
         race_start_pulse_count = hall_sensor.get_pulse_count()
+    # Reset speed variables for clean slate each race
+    imu_integrated_speed = 0.0
+    fused_speed = 0.0
+    wheel_speed = 0.0
+    logger.info("Speed reset: race start")
     logger.info("Race started - controls enabled")
 
 async def handle_start_race(request):

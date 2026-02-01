@@ -37,7 +37,7 @@ echo "Got TURN credentials, username: ${USERNAME:0:20}..."
 cat > "$MEDIAMTX_CONFIG" << EOF
 # MediaMTX configuration with Cloudflare TURN
 
-writeQueueSize: 64
+writeQueueSize: 128
 
 webrtcICEServers2:
   - url: stun:stun.cloudflare.com:3478
@@ -57,9 +57,9 @@ paths:
     rpiCameraWidth: 1280
     rpiCameraHeight: 720
     rpiCameraFPS: 60
-    rpiCameraBitrate: 4000000
+    rpiCameraBitrate: 3000000
     rpiCameraCodec: hardwareH264
-    rpiCameraIDRPeriod: 30
+    rpiCameraIDRPeriod: 15
     rpiCameraHardwareH264Profile: baseline
     rpiCameraDenoise: "off"
     rpiCameraEV: 1

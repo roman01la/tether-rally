@@ -11,6 +11,8 @@ let h264Sps = null;
 let h264Pps = null;
 let frameCount = 0;
 let lastFrameTime = 0;
+let videoWidth = 0;
+let videoHeight = 0;
 
 // ===== WebGL Setup =====
 const VERTEX_SHADER = `
@@ -100,6 +102,10 @@ function renderFrame(frame) {
 		canvas.height = frame.displayHeight;
 		gl.viewport(0, 0, canvas.width, canvas.height);
 	}
+
+	// Track resolution
+	videoWidth = frame.displayWidth;
+	videoHeight = frame.displayHeight;
 
 	// Upload VideoFrame directly as texture (zero-copy on supported platforms)
 	gl.bindTexture(gl.TEXTURE_2D, glTexture);
@@ -386,6 +392,8 @@ self.onmessage = (event) => {
 				lastFrameTime: lastFrameTime,
 				decoderState: videoDecoder ? videoDecoder.state : 'none',
 				queueSize: videoDecoder ? videoDecoder.decodeQueueSize || 0 : 0,
+				width: videoWidth,
+				height: videoHeight,
 			});
 			break;
 	}

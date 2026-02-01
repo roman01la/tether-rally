@@ -275,11 +275,16 @@
 				font-size: 12px;
 				color: rgba(255, 255, 255, 0.6);
 				font-family: monospace;
+				font-variant-numeric: tabular-nums;
+				min-width: 130px;
 			}
 			#latency {
 				font-size: 12px;
 				color: rgba(255, 255, 255, 0.6);
 				font-family: monospace;
+				font-variant-numeric: tabular-nums;
+				min-width: 40px;
+				text-align: right;
 			}
 			/* WiFi Signal Indicator (Pi's car WiFi) */
 			#wifi-signal {
@@ -289,6 +294,7 @@
 				font-size: 12px;
 				color: rgba(255, 255, 255, 0.6);
 				font-family: monospace;
+				font-variant-numeric: tabular-nums;
 			}
 			#wifi-signal .wifi-bars {
 				display: flex;
@@ -337,6 +343,7 @@
 				font-size: 12px;
 				color: rgba(255, 255, 255, 0.6);
 				font-family: monospace;
+				font-variant-numeric: tabular-nums;
 			}
 			.connection-quality .cq-icon {
 				width: 14px;
@@ -372,11 +379,12 @@
 			}
 			#hud-clock {
 				position: absolute;
-				top: 15px;
+				top: 23px;
 				left: 15px;
-				font-size: 18px;
+				font-size: 12px;
 				color: rgba(0, 255, 0, 0.9);
 				font-family: monospace;
+				font-variant-numeric: tabular-nums;
 				font-weight: bold;
 				text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
 				z-index: 20;
@@ -387,15 +395,10 @@
 				border-color: var(--color-turbo-border);
 				color: #000;
 			}
-			#traction-btn.active {
-				background: rgba(64, 145, 108, 0.9);
-				border-color: rgba(82, 183, 136, 0.8);
-				color: #fff;
-			}
-			#stability-btn.active {
-				background: rgba(90, 103, 216, 0.9);
-				border-color: rgba(120, 133, 246, 0.8);
-				color: #fff;
+			#assist-btn.active {
+				background: rgba(0, 200, 100, 0.9);
+				border-color: #00ff88;
+				color: #000;
 			}
 			@keyframes turbo-pulse {
 				0% {
@@ -417,6 +420,7 @@
 				border-radius: 4px;
 				font-size: 11px;
 				font-family: monospace;
+				font-variant-numeric: tabular-nums;
 				color: rgba(255, 255, 255, 0.7);
 				pointer-events: none;
 				z-index: 10;
@@ -553,9 +557,12 @@
 				font-size: 14px;
 				font-weight: 700;
 				font-family: monospace;
+				font-variant-numeric: tabular-nums;
 				background: rgba(0, 0, 0, 0.5);
 				color: var(--color-success);
 				display: none;
+				min-width: 110px;
+				text-align: center;
 			}
 			#race-timer.active {
 				display: block;
@@ -617,8 +624,11 @@
 				font-size: 14px;
 				font-weight: 700;
 				font-family: monospace;
+				font-variant-numeric: tabular-nums;
 				color: #fff;
 				text-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
+				min-width: 70px;
+				text-align: center;
 			}
 			#track-map .distance-display {
 				position: absolute;
@@ -627,8 +637,11 @@
 				transform: translateX(-50%);
 				font-size: 11px;
 				font-family: monospace;
+				font-variant-numeric: tabular-nums;
 				color: rgba(255, 255, 255, 0.7);
 				text-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
+				min-width: 55px;
+				text-align: center;
 			}
 
 			/* Back camera picture-in-picture */
@@ -747,9 +760,12 @@
 				margin-top: 2px;
 				font-size: 11px;
 				font-family: monospace;
+				font-variant-numeric: tabular-nums;
 				font-weight: 600;
 				color: rgba(255, 255, 255, 0.7);
 				text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+				min-width: 30px;
+				text-align: center;
 			}
 
 			/* Race stopped overlay */
@@ -906,12 +922,11 @@
 				text-decoration: underline;
 			}
 
-			/* Debug Overlay Panel */
-			#debug-overlay {
+			/* Debug Overlay Panels - split into left and right */
+			.debug-panel {
 				position: absolute;
-				top: 90px;
-				left: 10px;
-				width: 280px;
+				top: 210px;
+				width: 260px;
 				background: rgba(10, 10, 20, 0.85);
 				border: 1px solid rgba(100, 100, 140, 0.4);
 				border-radius: 8px;
@@ -923,13 +938,19 @@
 				backdrop-filter: blur(8px);
 				-webkit-backdrop-filter: blur(8px);
 				display: none;
-				max-height: calc(100vh - 200px);
+				max-height: calc(100vh - 230px);
 				overflow-y: auto;
 			}
-			#debug-overlay.active {
+			#debug-overlay-left {
+				left: 15px;
+			}
+			#debug-overlay-right {
+				right: 15px;
+			}
+			.debug-panel.active {
 				display: block;
 			}
-			#debug-overlay h3 {
+			.debug-panel h3 {
 				margin: 0 0 8px 0;
 				font-size: 12px;
 				color: #888;
@@ -1479,6 +1500,7 @@
 			<div id="hud">
 				<div id="status" class="disconnected">Disconnected</div>
 				<div id="race-timer">00:00.000</div>
+				<div id="hud-clock">00:00:00</div>
 				<div id="values">T: 0.000 | S: 0.000</div>
 				<div id="latency">--ms</div>
 				<div id="wifi-signal" title="Car WiFi Signal (Pi)">
@@ -1571,16 +1593,14 @@
 
 			<!-- Control Buttons -->
 			<div id="control-buttons-container">
-				<button id="assist-btn" class="control-btn disabled" onclick="toggleAssist()" data-kb="🛡️ ASSIST (Q)" data-gp="Ⓑ ASSIST">
-					🛡️ ASSIST (Q)
+				<button id="assist-btn" class="control-btn disabled" onclick="toggleAssist()" data-kb="ASSIST (Q)" data-gp="Ⓑ ASSIST">
+					ASSIST (Q)
 				</button>
-				<button id="turbo-btn" class="control-btn disabled" onclick="toggleTurbo()" data-kb="🚀 TURBO (E)" data-gp="Ⓐ TURBO">
-					🚀 TURBO (E)
-				</button>
+				<button id="turbo-btn" class="control-btn disabled" onclick="toggleTurbo()" data-kb="TURBO (E)" data-gp="Ⓐ TURBO">TURBO (E)</button>
 			</div>
 
 			<!-- Debug Overlay -->
-			<div id="debug-overlay">
+			<div id="debug-overlay-left" class="debug-panel">
 				<h3>🔧 Stability Debug</h3>
 
 				<!-- Throttle Pipeline -->
@@ -1694,8 +1714,10 @@
 					<div class="debug-row"><span class="debug-label">Counter-Steer</span><span class="debug-value" id="ss-counter">—</span></div>
 					<div class="debug-row"><span class="debug-label">Assist Amount</span><span class="debug-value" id="ss-assist">—</span></div>
 				</div>
+			</div>
 
-				<!-- ABS Controller -->
+			<div id="debug-overlay-right" class="debug-panel">
+				<h3>🔧 Assist Systems</h3>
 				<div class="debug-section">
 					<div class="debug-section-title">
 						<div class="debug-status-dot" id="abs-status-dot"></div>
@@ -2041,12 +2063,6 @@
 			const readyBtn = document.getElementById('ready-btn');
 			const waitingText = document.getElementById('waiting-text');
 			const turboBtn = document.getElementById('turbo-btn');
-			const tractionBtn = document.getElementById('traction-btn');
-			const stabilityBtn = document.getElementById('stability-btn');
-			const absBtn = document.getElementById('abs-btn');
-			const hillHoldBtn = document.getElementById('hill-hold-btn');
-			const coastBtn = document.getElementById('coast-btn');
-			const surfaceBtn = document.getElementById('surface-btn');
 
 			// Back camera PiP elements
 			const backCameraPip = document.getElementById('back-camera-pip');
@@ -2315,6 +2331,7 @@
 				const buttonMappings = [
 					{ index: 0, action: toggleTurbo }, // A = Turbo
 					{ index: 1, action: toggleAssist }, // B = Assist (all stability features)
+					{ index: 8, action: toggleDebugOverlay }, // Back/Select = Debug overlay
 					{ index: 13, action: toggleHeadlight }, // D-pad Down = Headlight
 					{ index: 9, action: clickStartable }, // Start/Menu = Click .startable button
 				];
@@ -2377,7 +2394,7 @@
 				controlScreen.classList.add('active');
 				document.body.classList.add('race-mode');
 				startFpvStream();
-				startBackCameraStream();
+				// startBackCameraStream();
 			}
 
 			// ===== WebRTC FPV Stream with WebCodecs =====
@@ -2398,6 +2415,7 @@
 			let wcLastStatsTime = performance.now();
 			let wcLastFrameTime = 0;
 			let wcDecoderQueueSize = 0;
+			let wcResolution = '';
 
 			async function getIceServers() {
 				// Use cached credentials if available and not expired
@@ -2476,6 +2494,9 @@
 
 							case 'stats':
 								wcDecoderQueueSize = event.data.queueSize;
+								if (event.data.width && event.data.height) {
+									wcResolution = `${event.data.width}x${event.data.height}`;
+								}
 								break;
 
 							case 'error':
@@ -2758,6 +2779,9 @@
 			let videoStatsInterval = null;
 			let lastBytesReceived = 0;
 			let lastStatsTime = 0;
+			let lastPacketsReceived = 0;
+			let lastPacketsLost = 0;
+			let lastFramesDropped = 0;
 			let connectionType = ''; // 'p2p' or 'relay'
 			const videoStatsEl = document.getElementById('video-stats');
 
@@ -2771,6 +2795,12 @@
 					let resolution = '';
 					let localCandidateId = null;
 					let remoteCandidateId = null;
+
+					// Diagnostic metrics
+					let packetsReceived = 0;
+					let packetsLost = 0;
+					let jitter = 0;
+					let framesDropped = 0;
 
 					stats.forEach((report) => {
 						if (report.type === 'inbound-rtp' && report.kind === 'video') {
@@ -2788,6 +2818,12 @@
 							}
 							lastBytesReceived = report.bytesReceived || 0;
 							lastStatsTime = now;
+
+							// Diagnostic metrics
+							packetsReceived = report.packetsReceived || 0;
+							packetsLost = report.packetsLost || 0;
+							jitter = report.jitter ? Math.round(report.jitter * 1000) : 0;
+							framesDropped = report.framesDropped || 0;
 						}
 
 						// RTT and candidate IDs from candidate pair
@@ -2837,6 +2873,18 @@
 					wcFrameCount = 0;
 					wcLastStatsTime = now;
 
+					// Calculate packet loss percentage for this interval
+					const packetLossDelta = packetsLost - lastPacketsLost;
+					const packetsReceivedDelta = packetsReceived - lastPacketsReceived;
+					const framesDroppedDelta = framesDropped - lastFramesDropped;
+					const totalPackets = packetLossDelta + packetsReceivedDelta;
+					const lossPercent = totalPackets > 0 ? ((packetLossDelta / totalPackets) * 100).toFixed(1) : 0;
+
+					// Update last values for next interval
+					lastPacketsLost = packetsLost;
+					lastPacketsReceived = packetsReceived;
+					lastFramesDropped = framesDropped;
+
 					// Update video quality indicator if we have RTT
 					if (rttMs > 0) {
 						updateVideoQuality(rttMs);
@@ -2848,13 +2896,16 @@
 					}
 
 					const parts = [];
-					if (resolution) parts.push(resolution);
-					if (fps > 0) parts.push(`${fps}fps`);
-					if (bitrate > 0) parts.push(`${bitrate}kbps`);
-					if (rttMs > 0) parts.push(`${Math.round(rttMs / 2) + MINIMAL_MEASURED_VIDEO_LATENCY}ms`);
-					if (wcDecoderQueueSize > 0) parts.push(`q:${wcDecoderQueueSize}`);
+					parts.push(wcResolution || resolution || '---');
+					parts.push(fps > 0 ? `${fps}fps` : '--fps');
+					parts.push(bitrate > 0 ? `${bitrate}kbps` : '----kbps');
+					parts.push(rttMs > 0 ? `${Math.round(rttMs / 2) + MINIMAL_MEASURED_VIDEO_LATENCY}ms` : '--ms');
+					parts.push(`q:${wcDecoderQueueSize}`);
+					parts.push(`j:${jitter}ms`);
+					parts.push(`loss:${lossPercent}%`);
+					parts.push(`drop:${framesDroppedDelta}`);
 
-					videoStatsEl.textContent = parts.length > 0 ? parts.join(' • ') : '';
+					videoStatsEl.textContent = parts.join(' • ');
 				} catch (err) {
 					// Ignore stats errors
 				}
@@ -2864,6 +2915,9 @@
 				stopVideoStats();
 				lastBytesReceived = 0;
 				lastStatsTime = 0;
+				lastPacketsReceived = 0;
+				lastPacketsLost = 0;
+				lastFramesDropped = 0;
 				wcFrameCount = 0;
 				wcLastStatsTime = performance.now();
 				videoStatsInterval = setInterval(updateVideoStats, 1000);
@@ -3157,12 +3211,7 @@
 						surfaceAdaptMode = view.getUint8(10) !== 0;
 					}
 					updateTurboIndicator();
-					updateTractionIndicator();
-					updateStabilityIndicator();
-					updateAbsIndicator();
-					updateHillHoldIndicator();
-					updateCoastIndicator();
-					updateSurfaceIndicator();
+					updateAssistButton();
 					console.log(
 						'Config received: turbo =',
 						turboMode,
@@ -3203,57 +3252,44 @@
 				};
 			}
 
-			// Create turbo, traction, and stability toggle features
-			const turboFeature = createToggleFeature('turbo', CMD_TURBO, turboBtn);
-			const tractionFeature = createToggleFeature('traction', CMD_TRACTION, tractionBtn);
-			const stabilityFeature = createToggleFeature('stability', CMD_STABILITY, stabilityBtn);
-			const absFeature = createToggleFeature('abs', CMD_ABS, absBtn);
-			const hillHoldFeature = createToggleFeature('hillHold', CMD_HILL_HOLD, hillHoldBtn);
-			const coastFeature = createToggleFeature('coast', CMD_COAST, coastBtn);
-			const surfaceFeature = createToggleFeature('surface', CMD_SURFACE_ADAPT, surfaceBtn);
+			// Create send-only feature (no button element needed)
+			function createSendOnlyFeature(name, cmd) {
+				return {
+					send(enabled) {
+						if (controlChannel && controlChannel.readyState === 'open') {
+							const { buf, view } = createPacket(cmd, 1);
+							view.setUint8(3, enabled ? 1 : 0);
+							controlChannel.send(buf);
+							console.log(`Sent ${name}:`, enabled, 'seq:', controlSeq);
+						}
+					},
+				};
+			}
 
-			// Convenience functions for backward compatibility
+			// Create turbo toggle feature (has visible button)
+			const turboFeature = createToggleFeature('turbo', CMD_TURBO, turboBtn);
+
+			// Create stability features (controlled via combined Assist button)
+			const tractionFeature = createSendOnlyFeature('traction', CMD_TRACTION);
+			const stabilityFeature = createSendOnlyFeature('stability', CMD_STABILITY);
+			const absFeature = createSendOnlyFeature('abs', CMD_ABS);
+			const hillHoldFeature = createSendOnlyFeature('hillHold', CMD_HILL_HOLD);
+			const coastFeature = createSendOnlyFeature('coast', CMD_COAST);
+			const surfaceFeature = createSendOnlyFeature('surface', CMD_SURFACE_ADAPT);
+
+			// Button update functions
 			function updateTurboIndicator() {
 				turboFeature.updateIndicator(turboMode);
-			}
-			function updateTractionIndicator() {
-				tractionFeature.updateIndicator(tractionMode);
-			}
-			function updateStabilityIndicator() {
-				stabilityFeature.updateIndicator(stabilityMode);
-			}
-			function updateAbsIndicator() {
-				absFeature.updateIndicator(absMode);
-			}
-			function updateHillHoldIndicator() {
-				hillHoldFeature.updateIndicator(hillHoldMode);
-			}
-			function updateCoastIndicator() {
-				coastFeature.updateIndicator(coastMode);
-			}
-			function updateSurfaceIndicator() {
-				surfaceFeature.updateIndicator(surfaceAdaptMode);
 			}
 			function updateTurboButton() {
 				turboFeature.updateButton();
 			}
-			function updateTractionButton() {
-				tractionFeature.updateButton();
-			}
-			function updateStabilityButton() {
-				stabilityFeature.updateButton();
-			}
-			function updateAbsButton() {
-				absFeature.updateButton();
-			}
-			function updateHillHoldButton() {
-				hillHoldFeature.updateButton();
-			}
-			function updateCoastButton() {
-				coastFeature.updateButton();
-			}
-			function updateSurfaceButton() {
-				surfaceFeature.updateButton();
+			function updateAssistButton() {
+				const btn = document.getElementById('assist-btn');
+				btn.classList.toggle('disabled', !isConnected);
+				// Sync assistMode from individual features (any one enabled = assist on)
+				assistMode = tractionMode || stabilityMode || absMode || hillHoldMode || coastMode || surfaceAdaptMode;
+				updateAssistIndicator();
 			}
 
 			function toggleTurbo() {
@@ -3731,11 +3767,14 @@
 
 			function toggleDebugOverlay() {
 				debugOverlayVisible = !debugOverlayVisible;
-				const overlay = document.getElementById('debug-overlay');
+				const overlayLeft = document.getElementById('debug-overlay-left');
+				const overlayRight = document.getElementById('debug-overlay-right');
 				if (debugOverlayVisible) {
-					overlay.classList.add('active');
+					overlayLeft.classList.add('active');
+					overlayRight.classList.add('active');
 				} else {
-					overlay.classList.remove('active');
+					overlayLeft.classList.remove('active');
+					overlayRight.classList.remove('active');
 				}
 			}
 
@@ -3840,8 +3879,8 @@
 
 			// Build compass strip HTML (called once)
 			function buildCompassStrip(container) {
-				// Build 720° of compass (duplicate for seamless wrapping)
-				// Cardinals every 45°, degrees every 15°
+				// Build 1080° of compass (3x rotation for seamless infinite wrapping)
+				// We display the middle 360° section and wrap around seamlessly
 				const directions = {
 					0: 'N',
 					45: 'NE',
@@ -3854,7 +3893,7 @@
 				};
 
 				let html = '';
-				for (let deg = 0; deg < 720; deg += 15) {
+				for (let deg = 0; deg < 1080; deg += 15) {
 					const actualDeg = deg % 360;
 					const dir = directions[actualDeg];
 
@@ -3890,13 +3929,17 @@
 					compassBuilt = true;
 				}
 
-				// Each 15° segment is about 25px wide (adjust based on CSS spacing)
-				// Strip total = 720° = 48 segments
+				// Each 15° segment is about 25px wide
+				// Strip total = 1080° = 72 segments, we show middle 360° section
 				const pixelsPerDegree = 25 / 15; // ~1.67 px per degree
-				const offset = smoothedHeading * pixelsPerDegree;
+				const stripWidth360 = 360 * pixelsPerDegree; // Width of one full rotation
+
+				// Start offset at middle section (360°) so we have room to scroll either direction
+				const baseOffset = stripWidth360; // Skip first 360° section
+				const headingOffset = smoothedHeading * pixelsPerDegree;
 
 				// Center the strip (140px = half of 280px container width)
-				compassStrip.style.transform = `translateX(${140 - offset}px)`;
+				compassStrip.style.transform = `translateX(${140 - baseOffset - headingOffset}px)`;
 
 				// Show numeric heading
 				headingDisplay.textContent = `${Math.round(smoothedHeading)}°`;
@@ -4013,12 +4056,7 @@
 					// Start ping for latency measurement
 					pingInterval = setInterval(sendPing, PING_INTERVAL_MS);
 					updateTurboButton();
-					updateTractionButton();
-					updateStabilityButton();
-					updateAbsButton();
-					updateHillHoldButton();
-					updateCoastButton();
-					updateSurfaceButton();
+					updateAssistButton();
 				};
 
 				controlChannel.onmessage = (event) => {
@@ -4427,8 +4465,7 @@
 				const h = String(now.getHours()).padStart(2, '0');
 				const m = String(now.getMinutes()).padStart(2, '0');
 				const s = String(now.getSeconds()).padStart(2, '0');
-				const ms = String(now.getMilliseconds()).padStart(3, '0');
-				hudClock.textContent = `${h}:${m}:${s}.${ms}`;
+				hudClock.textContent = `${h}:${m}:${s}`;
 				requestAnimationFrame(updateHudClock);
 			}
 			updateHudClock();
