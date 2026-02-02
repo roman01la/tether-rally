@@ -217,7 +217,8 @@ class ABSController:
         self.enabled = True
     
     def update_sensors(self, wheel_speed: float, vehicle_speed: float,
-                       imu_forward_accel: float, grip_multiplier: float = 1.0):
+                       imu_forward_accel: float, grip_multiplier: float = 1.0,
+                       direction_override: str = None):
         """
         Update sensor state at IMU rate (20 Hz) for consistent timing.
         
@@ -229,14 +230,20 @@ class ABSController:
             vehicle_speed: Fused vehicle speed (km/h)
             imu_forward_accel: Forward acceleration from IMU (m/s²)
             grip_multiplier: Surface grip multiplier from SurfaceAdaptation
+            direction_override: Optional direction from DirectionEstimator
+                               ("forward", "backward", "stopped")
+                               If provided, overrides internal direction detection
         """
         self._current_wheel_speed = wheel_speed
         self._current_vehicle_speed = vehicle_speed
         self._current_forward_accel = imu_forward_accel
         self._current_grip_multiplier = grip_multiplier
         
-        # Update direction at sensor rate
-        self._vehicle_direction = self._determine_direction(vehicle_speed, imu_forward_accel)
+        # Update direction - prefer external direction estimator if provided
+        if direction_override is not None:
+            self._vehicle_direction = direction_override
+        else:
+            self._vehicle_direction = self._determine_direction(vehicle_speed, imu_forward_accel)
         
         # Update smoothed slip ratio (only when moving forward fast enough)
         if vehicle_speed > self.MIN_SPEED_KMH:

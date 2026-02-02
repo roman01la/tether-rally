@@ -47,6 +47,7 @@ from abs_controller import ABSController, ThrottleStateTracker
 from hill_hold import HillHold
 from coast_control import CoastControl
 from surface_adaptation import SurfaceAdaptation
+from direction_estimator import DirectionEstimator
 
 logging.basicConfig(
     level=logging.INFO,
@@ -334,6 +335,10 @@ throttle_tracker = None  # ThrottleStateTracker for ESC state machine
 hill_hold_ctrl = None    # HillHold instance
 coast_ctrl = None        # CoastControl instance
 surface_adapt = None     # SurfaceAdaptation instance
+direction_est = None     # DirectionEstimator instance
+
+# Direction estimation state
+signed_speed = 0.0       # Signed speed from direction estimator (km/h)
 
 # New controller enable flags
 abs_enabled = False          # ABS toggle
@@ -946,6 +951,7 @@ async def imu_reader_loop():
     global abs_ctrl, abs_enabled, throttle_tracker
     global hill_hold_ctrl, hill_hold_enabled
     global surface_adapt, surface_adapt_enabled
+    global direction_est, signed_speed
     
     # Load saved calibration BEFORE init
     saved_cal = load_imu_calibration()
@@ -1033,6 +1039,19 @@ async def imu_reader_loop():
                     steering_input=current_steering
                 )
             
+            # Update direction estimator FIRST (at IMU rate for fast response)
+            # This provides signed speed and direction to ABS and other systems
+            direction = "stopped"
+            if direction_est and imu_valid:
+                signed_speed = direction_est.update(
+                    imu_accel=imu_forward_accel,
+                    wheel_speed_magnitude=wheel_speed,
+                    throttle=current_throttle,
+                    steering=current_steering,
+                    yaw_rate=imu_yaw_rate
+                )
+                direction = direction_est.get_direction()
+            
             # Update ABS controller sensor state (at IMU rate for consistent timing)
             # This keeps slip ratio and direction detection up-to-date between control messages
             if abs_ctrl and imu_valid:
@@ -1040,7 +1059,8 @@ async def imu_reader_loop():
                     wheel_speed=wheel_speed,
                     vehicle_speed=fused_speed,
                     imu_forward_accel=imu_forward_accel,
-                    grip_multiplier=grip_multiplier
+                    grip_multiplier=grip_multiplier,
+                    direction_override=direction
                 )
             
             # Auto-save calibration when fully calibrated (all 3s)
@@ -1831,6 +1851,11 @@ async def handle_health(request):
     # Get traction control status
     tc_status = traction_ctrl.get_status() if traction_ctrl else {"enabled": False}
     
+    # Get direction estimator status
+    dir_status = direction_est.get_status() if direction_est else {
+        "direction": "stopped", "signed_speed": 0.0, "confidence": 0.0
+    }
+    
     return web.json_response(
         {
             "status": "ok",
@@ -1845,7 +1870,9 @@ async def handle_health(request):
                 "gps_kmh": round(gps_speed, 2),
                 "wheel_kmh": round(wheel_speed, 2),
                 "wheel_rpm": round(wheel_rpm, 1),
-                "wheel_distance_m": round(wheel_distance, 2)
+                "wheel_distance_m": round(wheel_distance, 2),
+                "signed_kmh": round(dir_status['signed_speed'], 2),
+                "direction": dir_status['direction']
             },
             "gps": {
                 "fix": gps_fix,
@@ -1862,7 +1889,8 @@ async def handle_health(request):
                 "lateral_accel": round(imu_lateral_accel, 2),
                 "calibration": imu_calibration
             },
-            "traction_control": tc_status
+            "traction_control": tc_status,
+            "direction_estimator": dir_status
         },
         headers={"Access-Control-Allow-Origin": "*"}
     )
@@ -2172,6 +2200,10 @@ async def main():
     surface_adapt = SurfaceAdaptation()
     surface_adapt.enabled = False
     logger.info("Surface adaptation initialized (disabled by default)")
+    
+    # Initialize direction estimator (always active when IMU is valid)
+    direction_est = DirectionEstimator()
+    logger.info("Direction estimator initialized")
     
     # Start GPS reader loop
     gps_task = asyncio.create_task(gps_reader_loop())
