@@ -9,6 +9,11 @@ User=pi
 Group=pi
 SupplementaryGroups=dialout
 WorkingDirectory=/home/pi
+
+# Disable WiFi power saving before starting
+# Using + prefix to run as root (required for iw command)
+ExecStartPre=+/usr/sbin/iw wlan0 set power_save off
+
 ExecStart=/usr/bin/python3 /home/pi/control-relay.py
 Restart=always
 RestartSec=3
