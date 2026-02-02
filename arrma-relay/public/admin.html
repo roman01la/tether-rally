@@ -516,7 +516,11 @@
 		<script src="config.js" onerror="console.log('No config.js found, using defaults')"></script>
 
 		<script>
-			// Control Relay URL (via Cloudflare Tunnel in production)
+			// Worker URL for admin API proxy (admin calls go through Worker, not directly to Pi)
+			// The Worker handles Basic Auth and forwards to Pi with X-Admin-Password
+			const WORKER_URL = window.WORKER_URL || window.location.origin;
+
+			// Control Relay URL (via Cloudflare Tunnel) - only used for health check
 			const CONTROL_URL = window.CONTROL_URL || '';
 
 			// YouTube Restreamer (Fly.io)
@@ -672,7 +676,9 @@
 
 			async function startRace() {
 				try {
-					const res = await fetch(`${CONTROL_URL}/admin/start-race`, { method: 'POST' });
+					const res = await fetch(`${WORKER_URL}/admin/api/start-race`, {
+						method: 'POST',
+					});
 					const data = await res.json();
 
 					if (data.success) {
@@ -697,7 +703,9 @@
 				}
 
 				try {
-					const res = await fetch(`${CONTROL_URL}/admin/stop-race`, { method: 'POST' });
+					const res = await fetch(`${WORKER_URL}/admin/api/stop-race`, {
+						method: 'POST',
+					});
 					showMessage('Race stopped');
 				} catch (e) {
 					console.error('Stop race error:', e);
@@ -715,7 +723,9 @@
 				raceTimeEl.textContent = '00:00.000';
 
 				try {
-					const res = await fetch(`${CONTROL_URL}/admin/kick-player`, { method: 'POST' });
+					const res = await fetch(`${WORKER_URL}/admin/api/kick-player`, {
+						method: 'POST',
+					});
 					const data = await res.json();
 
 					if (data.success) {

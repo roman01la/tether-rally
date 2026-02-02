@@ -55,9 +55,19 @@ bool ControlChannel::connect(const std::string &controlUrl, const std::string &t
         // Try to fetch TURN credentials if URL provided
         if (!turnCredentialsUrl.empty())
         {
+            // Append token to TURN credentials URL (required for authentication)
+            std::string turnUrlWithToken = turnCredentialsUrl;
+            if (turnUrlWithToken.find('?') != std::string::npos)
+            {
+                turnUrlWithToken += "&token=" + token;
+            }
+            else
+            {
+                turnUrlWithToken += "?token=" + token;
+            }
             std::cout << "Fetching TURN credentials from: " << turnCredentialsUrl << std::endl;
 
-            std::string curlCmd = "curl -s '" + turnCredentialsUrl + "'";
+            std::string curlCmd = "curl -s '" + turnUrlWithToken + "'";
             FILE *pipe = popen(curlCmd.c_str(), "r");
             if (pipe)
             {

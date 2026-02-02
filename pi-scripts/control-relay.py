@@ -242,6 +242,9 @@ GPS_BAUD = 9600  # Try 38400 if 9600 doesn't work
 # Set via environment variable: export TOKEN_SECRET="your-secret-key"
 TOKEN_SECRET = os.environ.get('TOKEN_SECRET', 'change-me-in-production')
 
+# Admin password for /admin/* endpoints (must match ADMIN_PASSWORD in Cloudflare Worker)
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
+
 # TURN credentials (loaded from mediamtx config)
 TURN_USERNAME = ''
 TURN_CREDENTIAL = ''
@@ -517,6 +520,12 @@ async def wifi_monitor_loop():
 REVOKED_TOKENS_FILE = '/home/pi/revoked_tokens.txt'
 revoked_tokens = []  # List to maintain order
 current_player_token = None  # Track current player's token for kick functionality
+
+# Rate limiting for WebRTC offer endpoints (IP -> list of timestamps)
+# Limits: 5 requests per minute per IP
+RATE_LIMIT_WINDOW = 60  # seconds
+RATE_LIMIT_MAX_REQUESTS = 5
+rate_limit_tracker = {}  # IP -> [timestamp1, timestamp2, ...]
 
 def load_revoked_tokens():
     """Load revoked tokens from file on startup"""
@@ -1421,10 +1430,16 @@ async def handle_offer(request):
     """Handle WebRTC signaling (WHIP-like POST with SDP offer)"""
     global pc, control_channel, current_player_token
     
+    # Rate limiting
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip):
+        logger.warning(f"Rate limit exceeded for {client_ip}")
+        return web.Response(status=429, text='Too many requests', headers=CORS_HEADERS)
+    
     # Validate token
     token = request.query.get('token', '')
     if not validate_token(token):
-        logger.warning(f"Invalid token attempt")
+        logger.warning(f"Invalid token attempt from {client_ip}")
         return web.Response(status=401, text='Invalid or expired token')
     
     logger.info("Token validated, processing WebRTC offer")
@@ -1766,13 +1781,19 @@ async def handle_telemetry_offer(request):
     """Handle WebRTC signaling for telemetry subscribers (read-only, doesn't kick browser)"""
     global telemetry_subscribers
     
+    # Rate limiting
+    client_ip = get_client_ip(request)
+    if not check_rate_limit(client_ip):
+        logger.warning(f"Rate limit exceeded for telemetry from {client_ip}")
+        return web.Response(status=429, text='Too many requests', headers=CORS_HEADERS)
+    
     # Validate token
     token = request.query.get('token', '')
     if not validate_token(token):
-        logger.warning(f"Invalid token attempt for telemetry")
+        logger.warning(f"Invalid token attempt for telemetry from {client_ip}")
         return web.Response(status=401, text='Invalid or expired token')
     
-    logger.info("Telemetry subscriber connecting...")
+    logger.info(f"Telemetry subscriber connecting from {client_ip}...")
     
     # Configure ICE servers (same as main connection)
     ice_servers = []
@@ -1847,7 +1868,22 @@ async def handle_telemetry_offer(request):
 # ----- Health Check -----
 
 async def handle_health(request):
-    """Health check endpoint"""
+    """Health check endpoint - requires valid token to access detailed info"""
+    # Validate token for detailed health info
+    token = request.query.get('token', '')
+    has_valid_token = validate_token(token)
+    
+    # Basic health response (always available, no sensitive data)
+    if not has_valid_token:
+        return web.json_response(
+            {
+                "status": "ok",
+                "connected": pc is not None and pc.connectionState == "connected",
+            },
+            headers=CORS_HEADERS
+        )
+    
+    # Full health response (requires valid token)
     # Get traction control status
     tc_status = traction_ctrl.get_status() if traction_ctrl else {"enabled": False}
     
@@ -1859,7 +1895,6 @@ async def handle_health(request):
     return web.json_response(
         {
             "status": "ok",
-            "esp32_ip": ESP32_IP,
             "connected": pc is not None and pc.connectionState == "connected",
             "channel_open": control_channel is not None and control_channel.readyState == "open",
             "video_connected": video_connected,
@@ -1899,9 +1934,59 @@ async def handle_health(request):
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, X-Admin-Password",
 }
+
+def check_admin_auth(request) -> bool:
+    """Validate admin password from X-Admin-Password header.
+    Returns True if authenticated, False otherwise.
+    """
+    if not ADMIN_PASSWORD:
+        logger.warning("ADMIN_PASSWORD not configured - admin endpoints unprotected!")
+        return True  # Allow if not configured (for backwards compatibility during rollout)
+    
+    password = request.headers.get('X-Admin-Password', '')
+    return hmac.compare_digest(password, ADMIN_PASSWORD)
+
+def check_rate_limit(client_ip: str) -> bool:
+    """Check if client IP is within rate limit for offer endpoints.
+    Returns True if allowed, False if rate limited.
+    """
+    global rate_limit_tracker
+    now = time.time()
+    
+    # Clean up old entries
+    if client_ip in rate_limit_tracker:
+        rate_limit_tracker[client_ip] = [
+            ts for ts in rate_limit_tracker[client_ip] 
+            if now - ts < RATE_LIMIT_WINDOW
+        ]
+    else:
+        rate_limit_tracker[client_ip] = []
+    
+    # Check limit
+    if len(rate_limit_tracker[client_ip]) >= RATE_LIMIT_MAX_REQUESTS:
+        return False
+    
+    # Record this request
+    rate_limit_tracker[client_ip].append(now)
+    return True
+
+def get_client_ip(request) -> str:
+    """Extract client IP from request, handling X-Forwarded-For from Cloudflare Tunnel."""
+    # Cloudflare adds CF-Connecting-IP header
+    cf_ip = request.headers.get('CF-Connecting-IP')
+    if cf_ip:
+        return cf_ip
+    
+    # Standard X-Forwarded-For (first IP is original client)
+    xff = request.headers.get('X-Forwarded-For')
+    if xff:
+        return xff.split(',')[0].strip()
+    
+    # Fallback to peer IP
+    return request.remote or 'unknown'
 
 def send_race_command(sub_cmd: int, payload: bytes = b''):
     """Send a race command to the connected browser client"""
@@ -2005,6 +2090,10 @@ async def handle_start_race(request):
     """Admin endpoint to start race countdown"""
     global race_state, countdown_task
     
+    # Check admin authentication
+    if not check_admin_auth(request):
+        return web.json_response({"success": False, "error": "Unauthorized"}, status=401, headers=CORS_HEADERS)
+    
     if race_state != "idle":
         return web.json_response({"success": False, "error": "Race already in progress"}, status=400, headers=CORS_HEADERS)
     
@@ -2021,6 +2110,10 @@ async def handle_start_race(request):
 async def handle_stop_race(request):
     """Admin endpoint to stop race"""
     global race_state, race_start_time, countdown_task
+    
+    # Check admin authentication
+    if not check_admin_auth(request):
+        return web.json_response({"success": False, "error": "Unauthorized"}, status=401, headers=CORS_HEADERS)
     
     # Cancel countdown if in progress
     if countdown_task and not countdown_task.done():
@@ -2054,6 +2147,10 @@ def send_kick_command():
 async def handle_kick_player(request):
     """Admin endpoint to kick player and revoke their token"""
     global pc, control_channel, current_player_token, race_state, countdown_task
+    
+    # Check admin authentication
+    if not check_admin_auth(request):
+        return web.json_response({"success": False, "error": "Unauthorized"}, status=401, headers=CORS_HEADERS)
     
     if not pc or not control_channel:
         return web.json_response({"success": False, "error": "No player connected"}, status=400, headers=CORS_HEADERS)
@@ -2090,6 +2187,10 @@ async def handle_set_turbo(request):
     """Admin endpoint to toggle turbo mode"""
     global turbo_mode
     
+    # Check admin authentication
+    if not check_admin_auth(request):
+        return web.json_response({"success": False, "error": "Unauthorized"}, status=401, headers=CORS_HEADERS)
+    
     try:
         body = await request.json()
         new_turbo = bool(body.get('enabled', False))
@@ -2110,6 +2211,10 @@ async def handle_set_turbo(request):
 async def handle_set_traction_control(request):
     """Admin endpoint to toggle traction control"""
     global traction_enabled, traction_ctrl
+    
+    # Check admin authentication
+    if not check_admin_auth(request):
+        return web.json_response({"success": False, "error": "Unauthorized"}, status=401, headers=CORS_HEADERS)
     
     try:
         body = await request.json()

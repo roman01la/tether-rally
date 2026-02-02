@@ -2423,8 +2423,14 @@
 					return cachedIceServers;
 				}
 
+				// Token is required to get TURN credentials
+				if (!currentToken) {
+					console.warn('No token available for TURN credentials, using STUN only');
+					return [{ urls: 'stun:stun.l.google.com:19302' }];
+				}
+
 				try {
-					const response = await fetch(`${WORKER_URL}/turn-credentials`);
+					const response = await fetch(`${WORKER_URL}/turn-credentials?token=${encodeURIComponent(currentToken)}`);
 					if (response.ok) {
 						const data = await response.json();
 						cachedIceServers = data.iceServers;
@@ -2434,6 +2440,8 @@
 						}, TURN_CREDENTIAL_REFRESH_MS);
 						console.log('Got Cloudflare TURN credentials');
 						return cachedIceServers;
+					} else if (response.status === 401) {
+						console.warn('Token invalid for TURN credentials, using STUN only');
 					}
 				} catch (err) {
 					console.warn('Failed to get TURN credentials, falling back to STUN only:', err);
