@@ -167,7 +167,12 @@ class CarConfig:
     
     def __init__(self, profile_path: Path):
         """Load and validate configuration from INI file."""
-        self._config = configparser.ConfigParser()
+        # Disable interpolation to allow % in comments
+        # Enable inline comments with # character
+        self._config = configparser.ConfigParser(
+            interpolation=None,
+            inline_comment_prefixes=('#',)
+        )
         self._profile_path = profile_path
         
         if not profile_path.exists():
