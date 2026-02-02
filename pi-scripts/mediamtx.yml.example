@@ -11,7 +11,7 @@ apiAddress: 127.0.0.1:9997
 recordPath: /home/pi/recordings/%path_%Y-%m-%d_%H-%M-%S
 recordFormat: fmp4
 recordPartDuration: 2s
-recordSegmentDuration: 0s
+recordSegmentDuration: 1h
 
 webrtcICEServers2:
   - url: stun:stun.cloudflare.com:3478

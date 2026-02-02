@@ -152,8 +152,8 @@ def log_telemetry_frame():
     global gps_lat, gps_lon, gps_speed, gps_heading, gps_fix
     global imu_heading, imu_yaw_rate, imu_lateral_accel, blended_heading
     global fused_speed, wheel_speed, wheel_distance
-    global traction_ctrl, stability_ctrl, slip_watchdog, abs_controller
-    global traction_enabled, stability_enabled
+    global traction_ctrl, stability_ctrl, abs_ctrl
+    global traction_enabled, stability_enabled, abs_enabled
     
     if not telemetry_log_file:
         return
@@ -192,21 +192,23 @@ def log_telemetry_frame():
     
     # Add controller states if available
     if traction_ctrl and traction_enabled:
+        status = traction_ctrl.get_status()
         frame["traction"] = {
-            "slip_detected": traction_ctrl.slip_detected,
-            "throttle_mult": traction_ctrl.throttle_multiplier
+            "slip_detected": status['slip_detected'],
+            "throttle_mult": status['throttle_multiplier']
         }
     
     if stability_ctrl and stability_enabled:
         frame["stability"] = {
-            "correction": stability_ctrl.last_correction,
-            "yaw_error": getattr(stability_ctrl, 'yaw_error', 0)
+            "intervention": stability_ctrl.intervention_type,
+            "yaw_error": stability_ctrl.yaw_error
         }
     
-    if abs_controller:
+    if abs_ctrl and abs_enabled:
+        status = abs_ctrl.get_status()
         frame["abs"] = {
-            "active": abs_controller.abs_active,
-            "brake_pressure": abs_controller.brake_pressure
+            "active": status['active'],
+            "phase": status['phase']
         }
     
     try:
@@ -725,12 +727,12 @@ def broadcast_debug_telemetry():
 def broadcast_extended_telemetry():
     """Broadcast extended controller telemetry at 5Hz (ABS, Hill Hold, Coast, Surface, WiFi)"""
     global data_channels
-    global abs_ctrl, abs_enabled
+    global abs_ctrl, abs_enabled, throttle_tracker
     global hill_hold_ctrl, hill_hold_enabled
     global coast_ctrl, coast_enabled
     global surface_adapt, surface_adapt_enabled
     global imu_pitch
-    global ESP32_RSSI
+    global PI_WIFI_RSSI, PI_WIFI_LQ
     
     # ABS Controller: active(1), direction(1), phase(1), slip_ratio(2), esc_state(1) = 6 bytes
     abs_active = 0
@@ -893,15 +895,18 @@ async def telemetry_broadcast_loop():
     """Broadcast telemetry at 10Hz, extended telemetry at 5Hz"""
     extended_counter = 0
     while True:
-        if race_state == "racing":
-            broadcast_telemetry()
-            broadcast_debug_telemetry()
-            
-            # Extended telemetry at 5Hz (every other cycle)
-            extended_counter += 1
-            if extended_counter >= 2:
-                broadcast_extended_telemetry()
-                extended_counter = 0
+        try:
+            if race_state == "racing":
+                broadcast_telemetry()
+                broadcast_debug_telemetry()
+                
+                # Extended telemetry at 5Hz (every other cycle)
+                extended_counter += 1
+                if extended_counter >= 2:
+                    broadcast_extended_telemetry()
+                    extended_counter = 0
+        except Exception as e:
+            logger.error(f"Telemetry broadcast error: {e}", exc_info=True)
         await asyncio.sleep(0.1)  # 10Hz
 
 
@@ -1563,7 +1568,9 @@ async def handle_offer(request):
                             player_ready = value
                             logger.info(f"Player ready: {player_ready}")
                 elif cmd == CMD_TURBO:  # TURBO - player toggling turbo mode
-                    if len(message) >= 4:
+                    if race_state != "racing":
+                        pass  # Ignore car controls before race starts
+                    elif len(message) >= 4:
                         new_turbo = message[3] == 1
                         turbo_mode = new_turbo
                         logger.info(f"Turbo mode set by player: {turbo_mode}")
@@ -1574,7 +1581,9 @@ async def handle_offer(request):
                         # Send updated config back to confirm
                         send_config()
                 elif cmd == CMD_TRACTION:  # TRACTION - player toggling traction control
-                    if len(message) >= 4:
+                    if race_state != "racing":
+                        pass  # Ignore car controls before race starts
+                    elif len(message) >= 4:
                         traction_enabled = message[3] == 1
                         if traction_ctrl:
                             traction_ctrl.enabled = traction_enabled
@@ -1584,7 +1593,9 @@ async def handle_offer(request):
                         # Send updated config back to confirm
                         send_config()
                 elif cmd == CMD_STABILITY:  # STABILITY - player toggling yaw-rate control
-                    if len(message) >= 4:
+                    if race_state != "racing":
+                        pass  # Ignore car controls before race starts
+                    elif len(message) >= 4:
                         stability_enabled = message[3] == 1
                         if stability_ctrl:
                             stability_ctrl.enabled = stability_enabled
@@ -1602,13 +1613,17 @@ async def handle_offer(request):
                         # Send updated config back to confirm
                         send_config()
                 elif cmd == CMD_HEADLIGHT:  # HEADLIGHT - player toggling headlights
-                    if len(message) >= 4:
+                    if race_state != "racing":
+                        pass  # Ignore car controls before race starts
+                    elif len(message) >= 4:
                         global headlight_on
                         headlight_on = message[3] == 1
                         GPIO.output(HEADLIGHT_GPIO_PIN, GPIO.HIGH if headlight_on else GPIO.LOW)
                         logger.info(f"Headlight set by player: {'ON' if headlight_on else 'OFF'}")
                 elif cmd == CMD_ABS:  # ABS - player toggling ABS
-                    if len(message) >= 4:
+                    if race_state != "racing":
+                        pass  # Ignore car controls before race starts
+                    elif len(message) >= 4:
                         abs_enabled = message[3] == 1
                         if abs_ctrl:
                             abs_ctrl.enabled = abs_enabled
@@ -1619,7 +1634,9 @@ async def handle_offer(request):
                         logger.info(f"ABS set by player: {abs_enabled}")
                         send_config()
                 elif cmd == CMD_HILL_HOLD:  # HILL_HOLD - player toggling hill hold
-                    if len(message) >= 4:
+                    if race_state != "racing":
+                        pass  # Ignore car controls before race starts
+                    elif len(message) >= 4:
                         hill_hold_enabled = message[3] == 1
                         if hill_hold_ctrl:
                             hill_hold_ctrl.enabled = hill_hold_enabled
@@ -1628,7 +1645,9 @@ async def handle_offer(request):
                         logger.info(f"Hill hold set by player: {hill_hold_enabled}")
                         send_config()
                 elif cmd == CMD_COAST:  # COAST - player toggling coast control
-                    if len(message) >= 4:
+                    if race_state != "racing":
+                        pass  # Ignore car controls before race starts
+                    elif len(message) >= 4:
                         coast_enabled = message[3] == 1
                         if coast_ctrl:
                             coast_ctrl.enabled = coast_enabled
@@ -1637,7 +1656,9 @@ async def handle_offer(request):
                         logger.info(f"Coast control set by player: {coast_enabled}")
                         send_config()
                 elif cmd == CMD_SURFACE_ADAPT:  # SURFACE_ADAPT - player toggling surface adaptation
-                    if len(message) >= 4:
+                    if race_state != "racing":
+                        pass  # Ignore car controls before race starts
+                    elif len(message) >= 4:
                         surface_adapt_enabled = message[3] == 1
                         if surface_adapt:
                             surface_adapt.enabled = surface_adapt_enabled

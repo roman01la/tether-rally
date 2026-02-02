@@ -2637,7 +2637,7 @@
 
 					// Add transceivers for receiving video/audio
 					const videoTransceiver = fpvPeerConnection.addTransceiver('video', { direction: 'recvonly' });
-					fpvPeerConnection.addTransceiver('audio', { direction: 'recvonly' });
+					// fpvPeerConnection.addTransceiver('audio', { direction: 'recvonly' });
 
 					// IMPORTANT: Set up encoded streams IMMEDIATELY after creating transceiver,
 					// BEFORE any signaling happens. This is required by the API.

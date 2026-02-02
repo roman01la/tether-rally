@@ -38,9 +38,11 @@ var (
 	controlSecret     = getEnv("CONTROL_SECRET", "changeme")
 
 	// Telemetry state
-	telemetryMu      sync.RWMutex
-	currentTelemetry Telemetry
-	telemetryPC      *webrtc.PeerConnection
+	telemetryMu       sync.RWMutex
+	currentTelemetry  Telemetry
+	telemetryPC       *webrtc.PeerConnection
+	telemetryRunning  bool // Only connect when streaming is active
+	telemetryStopChan chan struct{}
 )
 
 // Telemetry data received from Pi
@@ -147,6 +149,11 @@ func startTelemetryClient() error {
 		return nil
 	}
 
+	if !telemetryRunning {
+		log.Println("Telemetry client not started (streaming not active)")
+		return nil
+	}
+
 	log.Printf("Starting telemetry client, connecting to %s", telemetryOfferURL)
 
 	// Create peer connection with TURN servers for NAT traversal
@@ -205,15 +212,19 @@ func startTelemetryClient() error {
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Printf("Telemetry connection state: %s", state)
 		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
-			// Reconnect after delay
-			go func() {
-				time.Sleep(5 * time.Second)
-				if telemetryPC != nil {
-					telemetryPC.Close()
-					telemetryPC = nil
-				}
-				startTelemetryClient()
-			}()
+			// Only reconnect if still supposed to be running
+			if telemetryRunning {
+				go func() {
+					time.Sleep(5 * time.Second)
+					if telemetryPC != nil {
+						telemetryPC.Close()
+						telemetryPC = nil
+					}
+					if telemetryRunning {
+						startTelemetryClient()
+					}
+				}()
+			}
 		}
 	})
 
@@ -276,6 +287,15 @@ func boolPtr(b bool) *bool {
 
 func uint16Ptr(v uint16) *uint16 {
 	return &v
+}
+
+func stopTelemetryClient() {
+	telemetryRunning = false
+	if telemetryPC != nil {
+		telemetryPC.Close()
+		telemetryPC = nil
+		log.Println("Telemetry client stopped")
+	}
 }
 
 // ----- MediaMTX & FFmpeg -----
@@ -433,12 +453,31 @@ func startFFmpeg() error {
 	}
 
 	log.Printf("FFmpeg started (PID: %d)", ffmpegCmd.Process.Pid)
+
+	// Start telemetry client now that streaming is active
+	if telemetryOfferURL != "" {
+		telemetryRunning = true
+		go func() {
+			for telemetryRunning {
+				if err := startTelemetryClient(); err != nil {
+					log.Printf("Telemetry client error: %v, retrying in 5s...", err)
+					time.Sleep(5 * time.Second)
+				} else {
+					break
+				}
+			}
+		}()
+	}
+
 	return nil
 }
 
 func stopFFmpeg() {
 	mu.Lock()
 	defer mu.Unlock()
+
+	// Stop telemetry client first
+	stopTelemetryClient()
 
 	if ffmpegCmd != nil && ffmpegCmd.Process != nil {
 		ffmpegCmd.Process.Kill()
@@ -490,20 +529,9 @@ func main() {
 	// Initialize telemetry file with default values
 	os.WriteFile("/tmp/telemetry.txt", []byte("TIME 00:00.000  THR 0%  STR 0%"), 0644)
 
-	// Start telemetry client if configured
+	// Telemetry client will be started when streaming starts (not on boot)
 	if telemetryOfferURL != "" {
-		log.Printf("TELEMETRY_OFFER_URL: %s", telemetryOfferURL)
-		go func() {
-			// Retry loop for telemetry client
-			for {
-				if err := startTelemetryClient(); err != nil {
-					log.Printf("Telemetry client error: %v, retrying in 5s...", err)
-					time.Sleep(5 * time.Second)
-				} else {
-					break
-				}
-			}
-		}()
+		log.Printf("TELEMETRY_OFFER_URL configured: %s (will connect when streaming starts)", telemetryOfferURL)
 	}
 
 	http.HandleFunc("/health", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
