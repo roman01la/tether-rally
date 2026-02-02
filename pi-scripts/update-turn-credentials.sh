@@ -39,6 +39,16 @@ cat > "$MEDIAMTX_CONFIG" << EOF
 
 writeQueueSize: 128
 
+# Enable REST API for recording control
+api: yes
+apiAddress: 127.0.0.1:9997
+
+# Recording defaults (recording is started/stopped via API during races)
+recordPath: /home/pi/recordings/%path_%Y-%m-%d_%H-%M-%S
+recordFormat: fmp4
+recordPartDuration: 2s
+recordSegmentDuration: 0s
+
 webrtcICEServers2:
   - url: stun:stun.cloudflare.com:3478
   - url: turn:turn.cloudflare.com:3478?transport=udp
@@ -67,9 +77,9 @@ paths:
     rpiCameraAfMode: manual
     rpiCameraLensPosition: 0.1
 
-  back:
-    source: rtsp://192.168.0.18/ch0
-    sourceOnDemand: true
+  # back:
+  #   source: rtsp://192.168.0.18/ch0
+  #   sourceOnDemand: true
 EOF
 
 echo "Updated MediaMTX config"

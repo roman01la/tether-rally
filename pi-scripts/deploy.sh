@@ -10,8 +10,8 @@ scp pi-scripts/control-relay.py pi-scripts/bno055_reader.py \
     pi-scripts/surface_adaptation.py pi-scripts/car_config.py \
     pi@arrma-pi2w.local:/home/pi/
 
-# Deploy profile configs
-ssh pi@arrma-pi2w.local 'mkdir -p /home/pi/profiles'
+# Deploy profile configs and create recordings directory
+ssh pi@arrma-pi2w.local 'mkdir -p /home/pi/profiles /home/pi/recordings'
 scp pi-scripts/profiles/*.ini pi@arrma-pi2w.local:/home/pi/profiles/
 
 # Deploy and reload systemd service (in case it's updated)

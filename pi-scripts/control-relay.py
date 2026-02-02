@@ -29,11 +29,12 @@ import logging
 import os
 import math
 import re
+import json
 import subprocess
 import serial
 import pynmea2
 import RPi.GPIO as GPIO
-from aiohttp import web
+from aiohttp import web, ClientSession
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from bno055_reader import BNO055
 from hall_rpm import HallRPM
@@ -52,6 +53,168 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# ----- MediaMTX Recording Control -----
+
+MEDIAMTX_API_URL = "http://127.0.0.1:9997"
+recording_active = False
+
+async def start_recording():
+    """Start MediaMTX recording via REST API."""
+    global recording_active
+    
+    try:
+        async with ClientSession() as session:
+            async with session.patch(
+                f"{MEDIAMTX_API_URL}/v3/config/paths/patch/cam",
+                json={"record": True},
+                timeout=5
+            ) as resp:
+                if resp.status == 200:
+                    recording_active = True
+                    logger.info("Recording started")
+                    return True
+                else:
+                    error = await resp.text()
+                    logger.error(f"Failed to start recording: {resp.status} - {error}")
+                    return False
+    except Exception as e:
+        logger.error(f"Error starting recording: {e}")
+        return False
+
+async def stop_recording():
+    """Stop MediaMTX recording via REST API."""
+    global recording_active
+    
+    if not recording_active:
+        return True
+    
+    try:
+        async with ClientSession() as session:
+            async with session.patch(
+                f"{MEDIAMTX_API_URL}/v3/config/paths/patch/cam",
+                json={"record": False},
+                timeout=5
+            ) as resp:
+                if resp.status == 200:
+                    recording_active = False
+                    logger.info("Recording stopped")
+                    return True
+                else:
+                    error = await resp.text()
+                    logger.error(f"Failed to stop recording: {resp.status} - {error}")
+                    return False
+    except Exception as e:
+        logger.error(f"Error stopping recording: {e}")
+        return False
+
+# ----- Telemetry File Logging -----
+
+telemetry_log_file = None
+telemetry_log_path = None
+
+def start_telemetry_log():
+    """Start logging telemetry to JSON lines file alongside video recording."""
+    global telemetry_log_file, telemetry_log_path
+    
+    if telemetry_log_file:
+        return  # Already logging
+    
+    # Create filename with timestamp matching MediaMTX recording naming
+    timestamp = time.strftime('%Y-%m-%d_%H-%M-%S')
+    telemetry_log_path = f"/home/pi/recordings/telemetry_{timestamp}.jsonl"
+    
+    try:
+        telemetry_log_file = open(telemetry_log_path, 'w')
+        logger.info(f"Telemetry logging started: {telemetry_log_path}")
+    except Exception as e:
+        logger.error(f"Failed to start telemetry logging: {e}")
+        telemetry_log_file = None
+        telemetry_log_path = None
+
+def stop_telemetry_log():
+    """Stop telemetry file logging."""
+    global telemetry_log_file, telemetry_log_path
+    
+    if telemetry_log_file:
+        try:
+            telemetry_log_file.close()
+            logger.info(f"Telemetry logging stopped: {telemetry_log_path}")
+        except Exception as e:
+            logger.error(f"Error closing telemetry log: {e}")
+        telemetry_log_file = None
+        telemetry_log_path = None
+
+def log_telemetry_frame():
+    """Write current telemetry frame to log file (called at 10Hz)."""
+    global telemetry_log_file
+    global race_state, race_start_time, current_throttle, current_steering
+    global gps_lat, gps_lon, gps_speed, gps_heading, gps_fix
+    global imu_heading, imu_yaw_rate, imu_lateral_accel, blended_heading
+    global fused_speed, wheel_speed, wheel_distance
+    global traction_ctrl, stability_ctrl, slip_watchdog, abs_controller
+    global traction_enabled, stability_enabled
+    
+    if not telemetry_log_file:
+        return
+    
+    # Calculate race time
+    if race_state == "racing" and race_start_time:
+        race_time_ms = int((time.time() - race_start_time) * 1000)
+    else:
+        race_time_ms = 0
+    
+    # Build telemetry frame
+    frame = {
+        "t": race_time_ms,  # Race time in ms
+        "ts": time.time(),  # Unix timestamp for syncing with video
+        "throttle": current_throttle,
+        "steering": current_steering,
+        "gps": {
+            "lat": gps_lat,
+            "lon": gps_lon,
+            "speed": gps_speed,
+            "heading": gps_heading,
+            "fix": gps_fix
+        },
+        "imu": {
+            "heading": blended_heading,
+            "yaw_rate": imu_yaw_rate,
+            "lateral_accel": imu_lateral_accel
+        },
+        "speed": {
+            "fused": fused_speed,
+            "wheel": wheel_speed,
+            "gps": gps_speed
+        },
+        "wheel_distance": wheel_distance
+    }
+    
+    # Add controller states if available
+    if traction_ctrl and traction_enabled:
+        frame["traction"] = {
+            "slip_detected": traction_ctrl.slip_detected,
+            "throttle_mult": traction_ctrl.throttle_multiplier
+        }
+    
+    if stability_ctrl and stability_enabled:
+        frame["stability"] = {
+            "correction": stability_ctrl.last_correction,
+            "yaw_error": getattr(stability_ctrl, 'yaw_error', 0)
+        }
+    
+    if abs_controller:
+        frame["abs"] = {
+            "active": abs_controller.abs_active,
+            "brake_pressure": abs_controller.brake_pressure
+        }
+    
+    try:
+        telemetry_log_file.write(json.dumps(frame) + '\n')
+        # Flush periodically to ensure data is written (every frame for safety)
+        telemetry_log_file.flush()
+    except Exception as e:
+        logger.warning(f"Error writing telemetry log: {e}")
 
 # ----- Configuration -----
 
@@ -451,6 +614,9 @@ def broadcast_telemetry():
                 channel.send(message)
         except Exception as e:
             logger.warning(f"Error sending telemetry: {e}")
+    
+    # Log telemetry to file if recording
+    log_telemetry_frame()
 
 
 def broadcast_debug_telemetry():
@@ -1769,6 +1935,10 @@ async def countdown_to_racing():
     wheel_speed = 0.0
     logger.info("Speed reset: race start")
     logger.info("Race started - controls enabled")
+    
+    # Start recording and telemetry logging
+    start_telemetry_log()
+    await start_recording()
 
 async def handle_start_race(request):
     """Admin endpoint to start race countdown"""
@@ -1795,6 +1965,10 @@ async def handle_stop_race(request):
     if countdown_task and not countdown_task.done():
         countdown_task.cancel()
         countdown_task = None
+    
+    # Stop recording and telemetry logging if active
+    stop_telemetry_log()
+    await stop_recording()
     
     race_state = "idle"
     race_start_time = None
@@ -1828,10 +2002,12 @@ async def handle_kick_player(request):
         revoke_token(current_player_token)
         current_player_token = None
     
-    # Stop any active race
+    # Stop any active race, recording, and telemetry logging
     if countdown_task and not countdown_task.done():
         countdown_task.cancel()
         countdown_task = None
+    stop_telemetry_log()
+    await stop_recording()
     race_state = "idle"
     
     # Send kick command to browser first (so it can stop video and show message)
