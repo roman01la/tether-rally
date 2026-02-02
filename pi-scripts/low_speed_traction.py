@@ -60,6 +60,9 @@ class LowSpeedTractionManager:
     continuous control strategy with speed-dependent behavior.
     """
     
+    # Scale factor: config uses 0-1000 range, actual throttle is -32767 to 32767
+    THROTTLE_SCALE = 32767 / 1000
+    
     def __init__(self):
         # Load config from car profile
         cfg = get_config()
@@ -69,10 +72,11 @@ class LowSpeedTractionManager:
         self.TRANSITION_PHASE_END = cfg.get_float('low_speed_traction', 'transition_phase_end_kmh')
         
         # === Launch Phase Parameters (proactive) ===
+        # Note: Config values are in 0-1000 range, scale to actual throttle range
         self.LAUNCH_TARGET_SLIP = cfg.get_float('low_speed_traction', 'launch_target_slip')
         self.LAUNCH_SLIP_TOLERANCE = cfg.get_float('low_speed_traction', 'launch_slip_tolerance')
-        self.LAUNCH_MAX_THROTTLE_RATE = cfg.get_int('low_speed_traction', 'launch_max_throttle_rate')
-        self.LAUNCH_THROTTLE_CEILING = cfg.get_int('low_speed_traction', 'launch_throttle_ceiling')
+        self.LAUNCH_MAX_THROTTLE_RATE = int(cfg.get_int('low_speed_traction', 'launch_max_throttle_rate') * self.THROTTLE_SCALE)
+        self.LAUNCH_THROTTLE_CEILING = int(cfg.get_int('low_speed_traction', 'launch_throttle_ceiling') * self.THROTTLE_SCALE)
         self.LAUNCH_SLIP_HIGH_CUT = cfg.get_float('low_speed_traction', 'launch_slip_high_cut')
         
         # === Cruise Phase Parameters (reactive) ===
@@ -82,7 +86,7 @@ class LowSpeedTractionManager:
         self.CRUISE_MIN_MULTIPLIER = cfg.get_float('low_speed_traction', 'cruise_min_multiplier')
         
         # === Shared Parameters ===
-        self.MIN_THROTTLE_FOR_SLIP = cfg.get_int('low_speed_traction', 'min_throttle_for_slip')
+        self.MIN_THROTTLE_FOR_SLIP = int(cfg.get_int('low_speed_traction', 'min_throttle_for_slip') * self.THROTTLE_SCALE)
         self.YAW_RATE_THRESHOLD = cfg.get_float('low_speed_traction', 'yaw_rate_threshold')
         self.ACCEL_SMOOTHING = cfg.get_float('low_speed_traction', 'accel_smoothing')
         

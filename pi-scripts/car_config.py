@@ -206,11 +206,13 @@ class CarConfig:
         """Get raw string value."""
         return self._config[section][key]
     
-    def get_float(self, section: str, key: str) -> float:
-        """Get float value."""
+    def get_float(self, section: str, key: str, default: float = None) -> float:
+        """Get float value, with optional default if key doesn't exist."""
         try:
             return self._config.getfloat(section, key)
-        except ValueError as e:
+        except (ValueError, KeyError) as e:
+            if default is not None:
+                return default
             raise CarConfigError(f"[{section}].{key} must be a number: {e}")
     
     def get_int(self, section: str, key: str) -> int:

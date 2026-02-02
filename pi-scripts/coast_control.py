@@ -41,14 +41,16 @@ class CoastControl:
         cfg = get_config()
         
         # === Tuning Parameters ===
+        # Config uses 0-1000 range, actual throttle is -32767 to 32767
+        THROTTLE_SCALE = 32767 / 1000
         
         # Release detection
-        self.RELEASE_FROM_THRESHOLD = cfg.get_int('coast_control', 'release_threshold_high')
-        self.RELEASE_TO_THRESHOLD = cfg.get_int('coast_control', 'release_threshold_low')
+        self.RELEASE_FROM_THRESHOLD = int(cfg.get_int('coast_control', 'release_threshold_high') * THROTTLE_SCALE)
+        self.RELEASE_TO_THRESHOLD = int(cfg.get_int('coast_control', 'release_threshold_low') * THROTTLE_SCALE)
         
         # Coast phase
         self.COAST_DURATION = cfg.get_float('coast_control', 'coast_duration_s')
-        self.COAST_INITIAL_THROTTLE = cfg.get_int('coast_control', 'coast_throttle')
+        self.COAST_INITIAL_THROTTLE = int(cfg.get_int('coast_control', 'coast_throttle') * THROTTLE_SCALE)
         
         # Minimum speed for coast assist
         self.MIN_SPEED_KMH = cfg.get_float('coast_control', 'min_speed_kmh')

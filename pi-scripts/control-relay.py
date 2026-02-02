@@ -1033,6 +1033,16 @@ async def imu_reader_loop():
                     steering_input=current_steering
                 )
             
+            # Update ABS controller sensor state (at IMU rate for consistent timing)
+            # This keeps slip ratio and direction detection up-to-date between control messages
+            if abs_ctrl and imu_valid:
+                abs_ctrl.update_sensors(
+                    wheel_speed=wheel_speed,
+                    vehicle_speed=fused_speed,
+                    imu_forward_accel=imu_forward_accel,
+                    grip_multiplier=grip_multiplier
+                )
+            
             # Auto-save calibration when fully calibrated (all 3s)
             # Only save once per session to avoid wear
             import time
@@ -1479,10 +1489,12 @@ async def handle_offer(request):
                         limited_throttle = current_throttle
                         shaped_steering = current_steering
                         
-                        # Update ESC state tracker for ABS
+                        # Update ESC state tracker for ABS (pass forward accel for direction hint)
                         esc_state = "neutral"
                         if throttle_tracker:
-                            esc_state = throttle_tracker.update(current_throttle, fused_speed)
+                            esc_state = throttle_tracker.update(
+                                current_throttle, fused_speed, imu_forward_accel
+                            )
                         
                         # Get grip multiplier from surface adaptation
                         grip_multiplier = 1.0

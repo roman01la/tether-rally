@@ -71,7 +71,9 @@ class SlipAngleWatchdog:
         self.min_speed_kmh = cfg.get_float('slip_angle_watchdog', 'min_speed_kmh')
         self.lateral_excess_threshold = cfg.get_float('slip_angle_watchdog', 'lateral_excess_threshold')
         self.slip_duration_threshold = cfg.get_float('slip_angle_watchdog', 'slip_duration_threshold_s')
-        self.min_throttle_for_intervention = cfg.get_int('slip_angle_watchdog', 'min_throttle_for_intervention')
+        # Config uses 0-1000 range, actual throttle is -32767 to 32767
+        THROTTLE_SCALE = 32767 / 1000
+        self.min_throttle_for_intervention = int(cfg.get_int('slip_angle_watchdog', 'min_throttle_for_intervention') * THROTTLE_SCALE)
         
         # === Throttle Control ===
         self.recovery_target = cfg.get_float('slip_angle_watchdog', 'recovery_target')

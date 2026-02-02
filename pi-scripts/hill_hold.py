@@ -55,16 +55,22 @@ class HillHold:
         # === Detection Thresholds ===
         self.PITCH_THRESHOLD_DEG = cfg.get_float('hill_hold', 'pitch_threshold_deg')
         self.SPEED_THRESHOLD_KMH = cfg.get_float('hill_hold', 'speed_threshold_kmh')
-        self.THROTTLE_DEADZONE = cfg.get_int('hill_hold', 'throttle_deadzone')
+        # Config uses 0-1000 range, actual throttle is -32767 to 32767
+        THROTTLE_SCALE = 32767 / 1000
+        self.THROTTLE_DEADZONE = int(cfg.get_int('hill_hold', 'throttle_deadzone') * THROTTLE_SCALE)
         
         # === Hold Parameters ===
-        self.HOLD_STRENGTH = cfg.get_int('hill_hold', 'hold_strength')
-        self.MAX_HOLD_FORCE = cfg.get_int('hill_hold', 'max_hold_force')
+        self.HOLD_STRENGTH = int(cfg.get_int('hill_hold', 'hold_strength') * THROTTLE_SCALE)
+        self.MAX_HOLD_FORCE = int(cfg.get_int('hill_hold', 'max_hold_force') * THROTTLE_SCALE)
         
         # === Release Parameters ===
-        self.IMMEDIATE_RELEASE_THRESHOLD = cfg.get_int('hill_hold', 'immediate_release_threshold')
+        self.IMMEDIATE_RELEASE_THRESHOLD = int(cfg.get_int('hill_hold', 'immediate_release_threshold') * THROTTLE_SCALE)
         self.BLEND_RATE = cfg.get_float('hill_hold', 'blend_rate')
         self.TIMEOUT_SECONDS = cfg.get_float('hill_hold', 'timeout_s')
+        
+        # Settling time: car must be stationary for this long before hill hold activates
+        # This prevents false activation from chassis tilt during acceleration
+        self.SETTLING_TIME_S = cfg.get_float('hill_hold', 'settling_time_s', default=0.5)
         
         # === State ===
         self._active = False
@@ -73,6 +79,7 @@ class HillHold:
         self._activation_time = 0.0
         self._pitch_at_activation = 0.0
         self._prev_time = time.time()
+        self._stationary_since = None       # When car became stationary with neutral throttle
         
         # Diagnostics
         self.current_pitch = 0.0
@@ -97,7 +104,7 @@ class HillHold:
         return max(-self.MAX_HOLD_FORCE, min(self.MAX_HOLD_FORCE, force))
     
     def _should_activate(self, pitch_deg: float, speed_kmh: float, 
-                         throttle_input: int) -> bool:
+                         throttle_input: int, timestamp: float) -> bool:
         """
         Determine if hill hold should engage.
         
@@ -105,12 +112,25 @@ class HillHold:
         - On a significant incline
         - Nearly stopped
         - Throttle released (driver not actively controlling)
+        - Stationary for settling time (prevents false trigger from chassis tilt)
         """
-        return (
-            abs(pitch_deg) > self.PITCH_THRESHOLD_DEG and
-            abs(speed_kmh) < self.SPEED_THRESHOLD_KMH and
-            abs(throttle_input) < self.THROTTLE_DEADZONE
-        )
+        stationary = abs(speed_kmh) < self.SPEED_THRESHOLD_KMH
+        throttle_neutral = abs(throttle_input) < self.THROTTLE_DEADZONE
+        on_incline = abs(pitch_deg) > self.PITCH_THRESHOLD_DEG
+        
+        # Track when car became stationary with neutral throttle
+        if stationary and throttle_neutral:
+            if self._stationary_since is None:
+                self._stationary_since = timestamp
+        else:
+            self._stationary_since = None
+            return False
+        
+        # Require settling time before activation
+        # This filters out chassis pitch from acceleration/deceleration
+        settled = (timestamp - self._stationary_since) >= self.SETTLING_TIME_S
+        
+        return on_incline and settled
     
     def _determine_release_mode(self, throttle_input: int, 
                                 pitch_deg: float) -> str:
@@ -178,7 +198,7 @@ class HillHold:
         
         # Check for activation
         if not self._active:
-            if self._should_activate(pitch_deg, speed_kmh, throttle_input):
+            if self._should_activate(pitch_deg, speed_kmh, throttle_input, timestamp):
                 self._active = True
                 self._blend_factor = 1.0
                 self._activation_time = timestamp
