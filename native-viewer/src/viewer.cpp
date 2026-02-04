@@ -1,7 +1,6 @@
 #include "viewer.h"
 #include "stream_decoder.h"
 #include "renderer.h"
-#include "control_channel.h"
 
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -14,7 +13,6 @@ Viewer::~Viewer()
 {
     stop();
 
-    controlChannel_.reset();
     renderer_.reset();
     decoder_.reset();
 
@@ -38,21 +36,6 @@ bool Viewer::initialize(const ViewerConfig &config)
     if (!initDecoder())
     {
         return false;
-    }
-
-    // Initialize control channel if URL and token provided
-    if (!config_.control_url.empty() && !config_.token.empty())
-    {
-        controlChannel_ = std::make_unique<ControlChannel>();
-        controlChannel_->setLatencyCallback([this](double latency)
-                                            { controlLatency_ = latency; });
-
-        std::cout << "Connecting control channel to: " << config_.control_url << std::endl;
-        if (!controlChannel_->connect(config_.control_url, config_.token, config_.turn_credentials_url))
-        {
-            std::cerr << "Warning: Failed to connect control channel" << std::endl;
-            // Continue anyway - video still works
-        }
     }
 
     return true;
@@ -167,17 +150,6 @@ int Viewer::run()
                 title << "ARRMA Viewer - "
                       << decoder_->getWidth() << "x" << decoder_->getHeight()
                       << " @ " << std::fixed << std::setprecision(0) << actualFps_ << " fps";
-
-                // Add control latency if connected
-                double latency = controlLatency_.load();
-                if (latency > 0)
-                {
-                    // Video latency = control RTT/2 + 120ms baseline (same as web app)
-                    constexpr double MINIMAL_VIDEO_LATENCY = 120.0;
-                    double videoLatency = latency + MINIMAL_VIDEO_LATENCY;
-                    title << " • " << std::setprecision(0) << videoLatency << "ms";
-                }
-
                 glfwSetWindowTitle(window_, title.str().c_str());
             }
             else
@@ -243,8 +215,6 @@ ViewerStats Viewer::getStats() const
     }
     stats.frames_decoded = framesDecoded_;
     stats.actual_fps = actualFps_;
-    stats.control_latency = controlLatency_;
-    stats.control_connected = controlChannel_ && controlChannel_->isConnected();
     return stats;
 }
 
@@ -309,5 +279,8 @@ void Viewer::keyCallback(GLFWwindow *window, int key, int scancode,
 
 void Viewer::framebufferSizeCallback(GLFWwindow *window, int width, int height)
 {
-    glViewport(0, 0, width, height);
+    (void)window;
+    (void)width;
+    (void)height;
+    // Renderer handles this via glViewport in render()
 }

@@ -145,13 +145,16 @@ bool Renderer::initialize()
                           (void *)(2 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
-    // Create texture
+    // Create texture with minimal filtering (fastest)
     glGenTextures(1, &texture_);
     glBindTexture(GL_TEXTURE_2D, texture_);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);  // Fastest
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);  // Fastest
+    
+    // Optimize pixel transfer for RGB (3 bytes per pixel, not 4-byte aligned)
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
     glBindVertexArray(0);
 

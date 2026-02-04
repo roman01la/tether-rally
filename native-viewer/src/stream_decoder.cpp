@@ -41,16 +41,22 @@ StreamDecoder::~StreamDecoder()
 
 bool StreamDecoder::connect(const std::string &url)
 {
-    // Set low-latency options for RTSP
+    // Aggressive low-latency options for RTSP
     AVDictionary *opts = nullptr;
-    av_dict_set(&opts, "rtsp_transport", "tcp", 0);
-    av_dict_set(&opts, "fflags", "nobuffer", 0);
-    av_dict_set(&opts, "flags", "low_delay", 0);
-    av_dict_set(&opts, "probesize", "500000", 0);       // Need enough to detect SPS/PPS
-    av_dict_set(&opts, "analyzeduration", "500000", 0); // 0.5 sec max
+    av_dict_set(&opts, "rtsp_transport", "tcp", 0);      // TCP for reliability
+    av_dict_set(&opts, "fflags", "nobuffer+discardcorrupt", 0); // No buffering, drop corrupt
+    av_dict_set(&opts, "flags", "low_delay", 0);         // Low delay mode
+    av_dict_set(&opts, "probesize", "32768", 0);         // Minimal probe (32KB)
+    av_dict_set(&opts, "analyzeduration", "0", 0);       // No analysis delay
+    av_dict_set(&opts, "sync", "ext", 0);                // External sync (no internal buffering)
+    av_dict_set(&opts, "framedrop", "1", 0);             // Drop frames if behind
+    av_dict_set(&opts, "max_delay", "0", 0);             // No demuxer delay
+    av_dict_set(&opts, "reorder_queue_size", "0", 0);    // No packet reordering buffer
 
     // Open input stream
     formatCtx_ = avformat_alloc_context();
+    formatCtx_->flags |= AVFMT_FLAG_NOBUFFER;             // Disable internal buffering
+    formatCtx_->flags |= AVFMT_FLAG_FLUSH_PACKETS;        // Flush packets immediately
     if (avformat_open_input(&formatCtx_, url.c_str(), nullptr, &opts) < 0)
     {
         std::cerr << "Failed to open stream: " << url << std::endl;
@@ -61,6 +67,7 @@ bool StreamDecoder::connect(const std::string &url)
 
     // Find stream info (minimal probing)
     formatCtx_->max_analyze_duration = 0;
+    formatCtx_->probesize = 32768;  // Override probesize at context level too
     if (avformat_find_stream_info(formatCtx_, nullptr) < 0)
     {
         std::cerr << "Failed to find stream info" << std::endl;
@@ -112,9 +119,18 @@ bool StreamDecoder::connect(const std::string &url)
         codecCtx_ = avcodec_alloc_context3(codec);
         avcodec_parameters_to_context(codecCtx_, codecpar);
 
-        // Low-latency flags
-        codecCtx_->flags |= AV_CODEC_FLAG_LOW_DELAY;
-        codecCtx_->flags2 |= AV_CODEC_FLAG2_FAST;
+        // Aggressive low-latency decoder flags
+        codecCtx_->flags |= AV_CODEC_FLAG_LOW_DELAY;   // Output frames ASAP
+        codecCtx_->flags2 |= AV_CODEC_FLAG2_FAST;      // Allow non-spec-compliant speedups
+        codecCtx_->thread_count = 1;                    // Single thread = no frame reordering
+        codecCtx_->thread_type = 0;                     // Disable threading entirely
+        codecCtx_->delay = 0;                           // No codec delay
+        codecCtx_->max_b_frames = 0;                    // Assume no B-frames (real-time)
+        codecCtx_->has_b_frames = 0;                    // No B-frame reordering needed
+        codecCtx_->refs = 1;                            // Minimal reference frames
+        codecCtx_->skip_loop_filter = AVDISCARD_ALL;   // Skip deblocking (faster)
+        codecCtx_->skip_idct = AVDISCARD_NONREF;       // Skip IDCT for non-reference
+        codecCtx_->skip_frame = AVDISCARD_NONREF;      // Skip non-reference frames if late
 
         if (avcodec_open2(codecCtx_, codec, nullptr) < 0)
         {
@@ -258,14 +274,15 @@ void StreamDecoder::decodeLoop()
                 srcFrame = swFrame_;
             }
 
-            // Convert to RGB
+            // Convert to RGB (use fastest scaling algorithm)
             if (!swsCtx_)
             {
                 swsCtx_ = sws_getContext(
                     srcFrame->width, srcFrame->height,
                     static_cast<AVPixelFormat>(srcFrame->format),
                     width_, height_, AV_PIX_FMT_RGB24,
-                    SWS_BILINEAR, nullptr, nullptr, nullptr);
+                    SWS_POINT,  // Nearest neighbor - fastest, no interpolation
+                    nullptr, nullptr, nullptr);
             }
 
             uint8_t *dstData[1] = {rgbBuffer};

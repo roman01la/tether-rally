@@ -9,7 +9,7 @@
 
 struct AppConfig
 {
-    std::string whep_url;
+    std::string rtsp_url;
 };
 
 class ConfigManager

@@ -11,14 +11,6 @@ VERSION="1.0.0"
 
 # Architecture detection
 ARCH=$(uname -m)
-if [ "$ARCH" = "arm64" ]; then
-    GO2RTC_ARCH="arm64"
-else
-    GO2RTC_ARCH="amd64"
-fi
-
-GO2RTC_VERSION="1.9.4"
-GO2RTC_URL="https://github.com/AlexxIT/go2rtc/releases/download/v${GO2RTC_VERSION}/go2rtc_darwin_${GO2RTC_ARCH}"
 
 echo "Building ARRMA Viewer for macOS ($ARCH)..."
 
@@ -37,16 +29,6 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 
 # Copy executable
 cp native-viewer "$APP_BUNDLE/Contents/MacOS/ARRMA Viewer"
-
-# Download go2rtc if not present
-if [ ! -f "$BUILD_DIR/go2rtc" ]; then
-    echo "Downloading go2rtc ${GO2RTC_VERSION}..."
-    curl -L -o "$BUILD_DIR/go2rtc" "$GO2RTC_URL"
-    chmod +x "$BUILD_DIR/go2rtc"
-fi
-
-# Copy go2rtc to bundle
-cp "$BUILD_DIR/go2rtc" "$APP_BUNDLE/Contents/Resources/go2rtc"
 
 # Create Info.plist
 cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
@@ -82,9 +64,6 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
 </plist>
 EOF
 
-# Create a simple icon (placeholder - you can replace with a real .icns file)
-# For now we'll skip the icon
-
 echo ""
 echo "=== Build Complete ==="
 echo "App bundle: $APP_BUNDLE"
@@ -102,14 +81,9 @@ if command -v create-dmg &> /dev/null; then
         --window-pos 200 120 \
         --window-size 600 400 \
         --icon-size 100 \
-        --icon "ARRMA Viewer.app" 150 200 \
-        --app-drop-link 450 200 \
+        --icon "ARRMA Viewer.app" 150 190 \
+        --app-drop-link 450 190 \
         "$BUILD_DIR/$DMG_NAME" \
         "$APP_BUNDLE"
-    echo "DMG: $BUILD_DIR/$DMG_NAME"
-else
-    echo "Note: Install 'create-dmg' (brew install create-dmg) to create a DMG installer"
+    echo "DMG created: $BUILD_DIR/$DMG_NAME"
 fi
-
-echo ""
-echo "Done!"

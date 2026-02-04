@@ -17,20 +17,16 @@ struct GLFWwindow;
 
 class StreamDecoder;
 class Renderer;
-class ControlChannel;
 
 /**
  * Configuration for the viewer
  */
 struct ViewerConfig
 {
-    std::string stream_url;           // RTSP stream URL
-    std::string control_url;          // Control relay URL
-    std::string turn_credentials_url; // TURN credentials URL (optional)
-    std::string token;                // Authentication token
-    int window_width = 1280;          // Window width
-    int window_height = 720;          // Window height
-    bool fullscreen = false;          // Start fullscreen
+    std::string stream_url; // RTSP stream URL
+    int window_width = 1280;
+    int window_height = 720;
+    bool fullscreen = false;
 };
 
 /**
@@ -43,9 +39,7 @@ struct ViewerStats
     double framerate = 0;
     int frames_decoded = 0;
     double actual_fps = 0;
-    double control_latency = 0; // Control channel latency in ms
     bool connected = false;
-    bool control_connected = false;
 };
 
 /**
@@ -121,13 +115,11 @@ private:
     // Components
     std::unique_ptr<StreamDecoder> decoder_;
     std::unique_ptr<Renderer> renderer_;
-    std::unique_ptr<ControlChannel> controlChannel_;
 
     // State
     std::atomic<bool> running_{false};
-    std::atomic<bool> showStats_{false};
+    std::atomic<bool> showStats_{true};
     std::atomic<int> framesDecoded_{0};
-    std::atomic<double> controlLatency_{0};
 
     // FPS measurement
     double lastFpsTime_ = 0;

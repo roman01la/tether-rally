@@ -5,22 +5,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Allow older CMake syntax in dependencies
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
-
-# Fetch libdatachannel for WebRTC DataChannel support
-include(FetchContent)
-FetchContent_Declare(
-    libdatachannel
-    GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
-    GIT_TAG v0.21.2
-)
-set(NO_WEBSOCKET ON CACHE BOOL "" FORCE)
-set(NO_MEDIA ON CACHE BOOL "" FORCE)
-set(NO_EXAMPLES ON CACHE BOOL "" FORCE)
-set(NO_TESTS ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(libdatachannel)
-
 # Find required packages
 find_package(OpenGL REQUIRED)
 find_package(PkgConfig REQUIRED)
@@ -72,9 +56,7 @@ set(SOURCES
     src/stream_decoder.cpp
     src/renderer.cpp
     src/config_manager.cpp
-    src/go2rtc_manager.cpp
     src/url_prompt.cpp
-    src/control_channel.cpp
 )
 
 set(HEADERS
@@ -82,9 +64,7 @@ set(HEADERS
     src/stream_decoder.h
     src/renderer.h
     src/config_manager.h
-    src/go2rtc_manager.h
     src/url_prompt.h
-    src/control_channel.h
 )
 
 # Executable
@@ -121,7 +101,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${AVUTIL_LIBRARIES}
     ${SWSCALE_LIBRARIES}
     ${PLATFORM_LIBRARIES}
-    LibDataChannel::LibDataChannel
 )
 
 # Install

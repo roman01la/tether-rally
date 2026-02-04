@@ -204,188 +204,155 @@ static void keyCallback(GLFWwindow *window, int key, int /*scancode*/, int actio
     }
 }
 
+// Simple immediate-mode text rendering using OpenGL 2.1
+static void renderText(float x, float y, const std::string &text, float scale, float r, float g, float b)
+{
+    glColor3f(r, g, b);
+    glPointSize(scale);
+
+    for (size_t i = 0; i < text.length(); i++)
+    {
+        int fontIdx = getFontIndex(text[i]);
+        const unsigned char *glyph = font8x8[fontIdx];
+
+        glBegin(GL_POINTS);
+        for (int row = 0; row < 8; row++)
+        {
+            for (int col = 0; col < 8; col++)
+            {
+                if (glyph[row] & (1 << (7 - col)))
+                {
+                    float px = x + (i * 8 + col) * scale;
+                    float py = y - row * scale;
+                    glVertex2f(px, py);
+                }
+            }
+        }
+        glEnd();
+    }
+}
+
 std::optional<std::string> UrlPromptDialog::show(const std::string &defaultUrl)
 {
-    // Reset state
-    g_inputText = defaultUrl;
+    // Reset global state
+    g_inputText = defaultUrl.empty() ? "rtsp://192.168.0.24:8554/cam" : defaultUrl;
     g_cursorPos = g_inputText.length();
     g_done = false;
     g_cancelled = false;
 
     if (!glfwInit())
     {
-        std::cerr << "Failed to initialize GLFW" << std::endl;
+        std::cerr << "Failed to initialize GLFW for URL prompt" << std::endl;
         return std::nullopt;
     }
 
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-    glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+    // Use OpenGL 2.1 for simple immediate mode rendering
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-    GLFWwindow *window = glfwCreateWindow(600, 150, "ARRMA Viewer - Enter WHEP URL", nullptr, nullptr);
+    GLFWwindow *window = glfwCreateWindow(640, 200, "Enter RTSP URL", nullptr, nullptr);
     if (!window)
     {
-        std::cerr << "Failed to create dialog window" << std::endl;
+        std::cerr << "Failed to create URL prompt window" << std::endl;
         glfwTerminate();
         return std::nullopt;
     }
 
     glfwMakeContextCurrent(window);
+    glfwSwapInterval(1);
+
     glfwSetCharCallback(window, charCallback);
     glfwSetKeyCallback(window, keyCallback);
 
-    // Create simple shader for rendering
-    const char *vertexShaderSource = R"(
-        #version 330 core
-        layout (location = 0) in vec2 aPos;
-        uniform vec2 offset;
-        uniform vec2 scale;
-        void main() {
-            gl_Position = vec4(aPos * scale + offset, 0.0, 1.0);
-        }
-    )";
+    // Set up orthographic projection
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, 640, 0, 200, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
 
-    const char *fragmentShaderSource = R"(
-        #version 330 core
-        out vec4 FragColor;
-        uniform vec3 color;
-        void main() {
-            FragColor = vec4(color, 1.0);
-        }
-    )";
+    double cursorBlinkTime = glfwGetTime();
+    bool showCursor = true;
 
-    unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
-    glCompileShader(vertexShader);
-
-    unsigned int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
-    glCompileShader(fragmentShader);
-
-    unsigned int shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glLinkProgram(shaderProgram);
-
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    // Create quad for character rendering
-    float quadVertices[] = {
-        0.0f, 0.0f,
-        1.0f, 0.0f,
-        1.0f, 1.0f,
-        0.0f, 1.0f};
-    unsigned int quadIndices[] = {0, 1, 2, 2, 3, 0};
-
-    unsigned int VAO, VBO, EBO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    glGenBuffers(1, &EBO);
-
-    glBindVertexArray(VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(quadIndices), quadIndices, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
-    glEnableVertexAttribArray(0);
-
-    int offsetLoc = glGetUniformLocation(shaderProgram, "offset");
-    int scaleLoc = glGetUniformLocation(shaderProgram, "scale");
-    int colorLoc = glGetUniformLocation(shaderProgram, "color");
-
-    auto drawText = [&](const std::string &text, float x, float y, float charW, float charH, float r, float g, float b)
-    {
-        glUniform3f(colorLoc, r, g, b);
-        glUniform2f(scaleLoc, charW, charH);
-
-        for (size_t i = 0; i < text.length(); i++)
-        {
-            int fontIdx = getFontIndex(text[i]);
-            const unsigned char *glyph = font8x8[fontIdx];
-
-            // Draw each pixel of the 8x8 glyph
-            for (int row = 0; row < 8; row++)
-            {
-                for (int col = 0; col < 8; col++)
-                {
-                    if (glyph[row] & (0x80 >> col))
-                    {
-                        float px = x + i * charW + col * (charW / 8.0f);
-                        float py = y - row * (charH / 8.0f);
-                        glUniform2f(offsetLoc, px, py);
-                        glUniform2f(scaleLoc, charW / 8.0f, charH / 8.0f);
-                        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
-                    }
-                }
-            }
-        }
-    };
-
-    auto drawRect = [&](float x, float y, float w, float h, float r, float g, float b)
-    {
-        glUniform3f(colorLoc, r, g, b);
-        glUniform2f(offsetLoc, x, y);
-        glUniform2f(scaleLoc, w, h);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
-    };
-
-    while (!glfwWindowShouldClose(window) && !g_done && !g_cancelled)
+    while (!g_done && !g_cancelled && !glfwWindowShouldClose(window))
     {
         glfwPollEvents();
 
-        glClearColor(0.15f, 0.15f, 0.18f, 1.0f);
+        // Cursor blinking
+        double currentTime = glfwGetTime();
+        if (currentTime - cursorBlinkTime > 0.5)
+        {
+            showCursor = !showCursor;
+            cursorBlinkTime = currentTime;
+        }
+
+        // Clear
+        glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        glUseProgram(shaderProgram);
-        glBindVertexArray(VAO);
+        // Render title
+        renderText(20, 170, "Enter RTSP URL:", 2.0f, 0.8f, 0.8f, 0.8f);
 
-        // Draw title
-        drawText("Enter WHEP URL:", -0.9f, 0.7f, 0.04f, 0.08f, 0.9f, 0.9f, 0.9f);
+        // Render example
+        renderText(20, 140, "Example: rtsp://192.168.0.24:8554/cam", 1.5f, 0.5f, 0.5f, 0.5f);
 
-        // Draw input box background
-        drawRect(-0.9f, -0.1f, 1.8f, 0.4f, 0.25f, 0.25f, 0.28f);
+        // Input box background
+        glColor3f(0.2f, 0.2f, 0.25f);
+        glBegin(GL_QUADS);
+        glVertex2f(15, 55);
+        glVertex2f(625, 55);
+        glVertex2f(625, 105);
+        glVertex2f(15, 105);
+        glEnd();
 
-        // Draw input text
-        std::string displayText = g_inputText;
-        if (displayText.length() > 50)
+        // Input box border
+        glColor3f(0.4f, 0.4f, 0.5f);
+        glLineWidth(2.0f);
+        glBegin(GL_LINE_LOOP);
+        glVertex2f(15, 55);
+        glVertex2f(625, 55);
+        glVertex2f(625, 105);
+        glVertex2f(15, 105);
+        glEnd();
+
+        // Render input text
+        float textScale = 2.0f;
+        float textX = 25;
+        float textY = 90;
+
+        // Calculate visible portion of text (scrolling)
+        size_t maxVisibleChars = 70;
+        size_t startIdx = 0;
+        if (g_cursorPos > maxVisibleChars - 5)
         {
-            // Show last 50 chars if too long
-            displayText = "..." + displayText.substr(displayText.length() - 47);
+            startIdx = g_cursorPos - maxVisibleChars + 5;
         }
-        drawText(displayText, -0.85f, 0.15f, 0.03f, 0.06f, 1.0f, 1.0f, 1.0f);
+        std::string visibleText = g_inputText.substr(startIdx, maxVisibleChars);
 
-        // Draw cursor (blinking)
-        double time = glfwGetTime();
-        if (static_cast<int>(time * 2) % 2 == 0)
+        renderText(textX, textY, visibleText, textScale, 1.0f, 1.0f, 1.0f);
+
+        // Render cursor
+        if (showCursor)
         {
-            size_t visibleCursor = g_cursorPos;
-            if (g_inputText.length() > 50 && g_cursorPos > 47)
-            {
-                visibleCursor = g_cursorPos - (g_inputText.length() - 50) + 3;
-            }
-            float cursorX = -0.85f + visibleCursor * 0.03f;
-            drawRect(cursorX, -0.05f, 0.003f, 0.25f, 1.0f, 1.0f, 1.0f);
+            size_t cursorVisualPos = g_cursorPos - startIdx;
+            float cursorX = textX + cursorVisualPos * 8 * textScale;
+            glColor3f(1.0f, 1.0f, 1.0f);
+            glLineWidth(2.0f);
+            glBegin(GL_LINES);
+            glVertex2f(cursorX, textY - 16);
+            glVertex2f(cursorX, textY + 4);
+            glEnd();
         }
 
-        // Draw instructions
-        drawText("Press ENTER to connect, ESC to cancel", -0.9f, -0.5f, 0.025f, 0.05f, 0.6f, 0.6f, 0.6f);
-        drawText("Example: https://cam.example.com/cam/whep", -0.9f, -0.7f, 0.02f, 0.04f, 0.5f, 0.5f, 0.5f);
+        // Render instructions
+        renderText(20, 30, "Press ENTER to connect, ESC to cancel", 1.5f, 0.5f, 0.5f, 0.5f);
 
         glfwSwapBuffers(window);
     }
 
-    // Cleanup
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
-    glDeleteBuffers(1, &EBO);
-    glDeleteProgram(shaderProgram);
-
     glfwDestroyWindow(window);
-    // Don't terminate GLFW - main window will use it
+    glfwTerminate();
 
     if (g_cancelled || g_inputText.empty())
     {

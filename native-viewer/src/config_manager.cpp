@@ -56,8 +56,8 @@ std::optional<AppConfig> ConfigManager::load()
     buffer << file.rdbuf();
     std::string content = buffer.str();
 
-    // Simple JSON parsing for {"whep_url": "..."}
-    size_t urlStart = content.find("\"whep_url\"");
+    // Simple JSON parsing for {"rtsp_url": "..."}
+    size_t urlStart = content.find("\"rtsp_url\"");
     if (urlStart == std::string::npos)
     {
         return std::nullopt;
@@ -82,7 +82,7 @@ std::optional<AppConfig> ConfigManager::load()
     }
 
     AppConfig config;
-    config.whep_url = content.substr(firstQuote + 1, secondQuote - firstQuote - 1);
+    config.rtsp_url = content.substr(firstQuote + 1, secondQuote - firstQuote - 1);
 
     return config;
 }
@@ -100,7 +100,7 @@ bool ConfigManager::save(const AppConfig &config)
 
     // Simple JSON output
     file << "{\n";
-    file << "  \"whep_url\": \"" << config.whep_url << "\"\n";
+    file << "  \"rtsp_url\": \"" << config.rtsp_url << "\"\n";
     file << "}\n";
 
     return file.good();
