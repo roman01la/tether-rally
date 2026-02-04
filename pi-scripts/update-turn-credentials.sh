@@ -69,13 +69,20 @@ paths:
     rpiCameraFPS: 60
     rpiCameraBitrate: 3000000
     rpiCameraCodec: hardwareH264
-    rpiCameraIDRPeriod: 15
+    rpiCameraIDRPeriod: 30
     rpiCameraHardwareH264Profile: baseline
     rpiCameraDenoise: "off"
-    rpiCameraEV: 1
+    rpiCameraEV: 0
     rpiCameraHDR: false
     rpiCameraAfMode: manual
     rpiCameraLensPosition: 0.1
+    rpiCameraShutter: 10000
+    rpiCameraGain: 4.0
+    rpiCameraAWBGains: [2.0, 1.8]
+    rpiCameraSharpness: 0
+    rpiCameraContrast: 1
+    rpiCameraSaturation: 1
+    rpiCameraBrightness: 0
 
   # back:
   #   source: rtsp://192.168.0.18/ch0
