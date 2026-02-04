@@ -8,7 +8,7 @@ scp pi-scripts/control-relay.py pi-scripts/bno055_reader.py \
     pi-scripts/steering_shaper.py pi-scripts/abs_controller.py \
     pi-scripts/hill_hold.py pi-scripts/coast_control.py \
     pi-scripts/surface_adaptation.py pi-scripts/car_config.py \
-    pi-scripts/direction_estimator.py \
+    pi-scripts/direction_estimator.py pi-scripts/stun_client.py \
     pi@arrma-pi2w.local:/home/pi/
 
 # Deploy profile configs and create recordings directory

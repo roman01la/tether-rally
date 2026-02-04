@@ -48,6 +48,7 @@ from hill_hold import HillHold
 from coast_control import CoastControl
 from surface_adaptation import SurfaceAdaptation
 from direction_estimator import DirectionEstimator
+from stun_client import discover_endpoint
 
 logging.basicConfig(
     level=logging.INFO,
@@ -348,6 +349,32 @@ abs_enabled = False          # ABS toggle
 hill_hold_enabled = False    # Hill hold toggle
 coast_enabled = False        # Coast control toggle
 surface_adapt_enabled = False # Surface adaptation toggle
+
+# ----- UDP Hole Punch State -----
+
+# UDP socket for hole punching (receives RTP from client, forwards to them)
+hole_punch_sock = None
+hole_punch_port = 5004  # Local port for hole punching
+
+# Public endpoint (discovered via STUN)
+public_ip = None
+public_port = None
+nat_type_symmetric = False
+
+# Active hole punch sessions: {(client_ip, client_port): last_activity_time}
+active_punch_clients = {}
+
+# Cached SPS/PPS from RTSP DESCRIBE (base64 encoded, comma-separated)
+cached_sprop_parameter_sets = ""
+
+# STUN refresh interval (NAT mappings typically timeout in 30-60s)
+STUN_REFRESH_INTERVAL = 20  # seconds
+stun_refresh_task = None
+
+# RTP forwarding state
+rtp_forwarder = None  # RTSPForwarder instance
+MEDIAMTX_RTSP_URL = "rtsp://127.0.0.1:8554/cam"
+RTP_LOCAL_PORT = 5006  # Local port for receiving RTP from MediaMTX
 
 # Load car configuration
 _cfg = get_config()
@@ -1408,7 +1435,7 @@ async def discover_esp32():
     
     logger.info(f"Listening for ESP32 beacon on port {BEACON_PORT}")
     
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     
     while True:
         try:
@@ -2234,6 +2261,623 @@ async def handle_set_traction_control(request):
         logger.error(f"Error setting traction control: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=400, headers=CORS_HEADERS)
 
+# ----- UDP Hole Punch -----
+
+async def init_hole_punch_socket():
+    """Initialize UDP socket for hole punching and discover public endpoint."""
+    global hole_punch_sock, public_ip, public_port, nat_type_symmetric
+    
+    # Create UDP socket
+    hole_punch_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    hole_punch_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    hole_punch_sock.bind(('0.0.0.0', hole_punch_port))
+    hole_punch_sock.setblocking(False)
+    
+    logger.info(f"Hole punch socket bound to port {hole_punch_port}")
+    
+    # Discover public endpoint via STUN
+    try:
+        endpoint = await discover_endpoint(hole_punch_sock)
+        public_ip = endpoint['ip']
+        public_port = endpoint['port']
+        nat_type_symmetric = endpoint['is_symmetric']
+        
+        logger.info(f"Public endpoint: {public_ip}:{public_port} (symmetric={nat_type_symmetric})")
+        
+        if nat_type_symmetric:
+            logger.warning("Symmetric NAT detected - hole punching may not work!")
+            
+    except Exception as e:
+        logger.error(f"STUN discovery failed: {e}")
+        raise
+
+
+async def stun_refresh_loop():
+    """Periodically refresh STUN binding to keep NAT mapping alive."""
+    global public_ip, public_port, nat_type_symmetric, hole_punch_sock
+    
+    while True:
+        await asyncio.sleep(STUN_REFRESH_INTERVAL)
+        
+        if not hole_punch_sock:
+            continue
+            
+        try:
+            endpoint = await discover_endpoint(hole_punch_sock)
+            
+            # Check if endpoint changed (NAT rebinding)
+            if endpoint['ip'] != public_ip or endpoint['port'] != public_port:
+                logger.warning(
+                    f"Public endpoint changed: {public_ip}:{public_port} -> "
+                    f"{endpoint['ip']}:{endpoint['port']}"
+                )
+            
+            public_ip = endpoint['ip']
+            public_port = endpoint['port']
+            nat_type_symmetric = endpoint['is_symmetric']
+            
+        except Exception as e:
+            logger.error(f"STUN refresh failed: {e}")
+
+
+async def get_mediamtx_sdp_info() -> dict:
+    """Fetch codec info from MediaMTX API."""
+    try:
+        async with ClientSession() as session:
+            async with session.get(
+                f"{MEDIAMTX_API_URL}/v3/paths/get/cam",
+                timeout=5
+            ) as resp:
+                if resp.status != 200:
+                    logger.error(f"MediaMTX API error: {resp.status}")
+                    return None
+                
+                data = await resp.json()
+                
+                # Extract relevant codec info from source
+                source = data.get('source', {})
+                tracks = source.get('tracks', [])
+                
+                # Find H264 video track
+                for track in tracks:
+                    if track.get('codec', '').upper() == 'H264':
+                        return {
+                            'codec': 'H264',
+                            'width': track.get('width', 1280),
+                            'height': track.get('height', 720),
+                            'fps': track.get('fps', 60),
+                            # SPS/PPS in base64 if available
+                            'spropParameterSets': track.get('spropParameterSets', ''),
+                        }
+                
+                # Fallback to default values if track info not found
+                logger.warning("H264 track not found in MediaMTX, using defaults")
+                return {
+                    'codec': 'H264',
+                    'width': 1280,
+                    'height': 720,
+                    'fps': 60,
+                    'spropParameterSets': '',
+                }
+                
+    except Exception as e:
+        logger.error(f"Failed to get MediaMTX info: {e}")
+        return None
+
+
+async def send_punch_packets(client_ip: str, client_port: int, count: int = 5):
+    """Send hole punch packets to client to open NAT pinhole."""
+    global hole_punch_sock
+    
+    if not hole_punch_sock:
+        logger.error("send_punch_packets: hole_punch_sock is None!")
+        return
+    
+    logger.info(f"Sending {count} punch packets to {client_ip}:{client_port}")
+    
+    for i in range(count):
+        try:
+            # Send a small punch packet (just a marker byte)
+            hole_punch_sock.sendto(b'\x00', (client_ip, client_port))
+            logger.info(f"Sent punch packet {i+1}/{count} to {client_ip}:{client_port}")
+        except Exception as e:
+            logger.error(f"Failed to send punch packet: {e}")
+        
+        if i < count - 1:
+            await asyncio.sleep(0.1)  # 100ms between packets
+    
+    logger.info(f"Finished sending punch packets to {client_ip}:{client_port}")
+
+
+async def handle_stream_punch(request):
+    """Handle hole punch request from IWA client.
+    
+    Client sends: {clientIp, clientPort}
+    Server responds: {piIp, piPort, sdpInfo, natType}
+    Before responding, starts sending punch packets to client.
+    """
+    global active_punch_clients
+    
+    # Validate token
+    token = request.query.get('token', '')
+    if not validate_token(token):
+        logger.warning("Invalid token for stream punch")
+        return web.json_response(
+            {"error": "Invalid or expired token"},
+            status=401,
+            headers=CORS_HEADERS
+        )
+    
+    # Check if hole punch socket is ready
+    if not hole_punch_sock or not public_ip:
+        return web.json_response(
+            {"error": "Hole punch not initialized"},
+            status=503,
+            headers=CORS_HEADERS
+        )
+    
+    try:
+        body = await request.json()
+        client_ip = body.get('clientIp')
+        client_port = body.get('clientPort')
+        
+        if not client_ip or not client_port:
+            return web.json_response(
+                {"error": "Missing clientIp or clientPort"},
+                status=400,
+                headers=CORS_HEADERS
+            )
+        
+        client_port = int(client_port)
+        
+        logger.info(f"Hole punch request from {client_ip}:{client_port}")
+        
+        # Remove any existing entries from the same IP (client reconnected with new port)
+        old_entries = [k for k in active_punch_clients if k[0] == client_ip]
+        for old_entry in old_entries:
+            del active_punch_clients[old_entry]
+            logger.info(f"[HolePunch] Removed old entry for same IP: {old_entry}")
+        
+        # Track this client
+        active_punch_clients[(client_ip, client_port)] = time.time()
+        logger.info(f"[HolePunch] Added client {client_ip}:{client_port} to active_punch_clients, total: {len(active_punch_clients)}")
+        
+        # Start RTSP forwarder immediately - this also caches sprop-parameter-sets
+        await ensure_rtsp_forwarder()
+        
+        # Build sdp_info with cached sprop-parameter-sets from RTSP DESCRIBE
+        sdp_info = {
+            'codec': 'H264',
+            'width': 1280,
+            'height': 720,
+            'fps': 60,
+            'spropParameterSets': cached_sprop_parameter_sets,
+        }
+        
+        if cached_sprop_parameter_sets:
+            logger.info(f"Sending sprop-parameter-sets to client: {cached_sprop_parameter_sets[:50]}...")
+        else:
+            logger.warning("No sprop-parameter-sets cached, client will configure from stream")
+        
+        # Start sending punch packets BEFORE responding
+        # This ensures our NAT opens the pinhole before client tries to send
+        asyncio.create_task(send_punch_packets(client_ip, client_port))
+        
+        # Small delay to ensure some packets are sent before response
+        await asyncio.sleep(0.05)
+        
+        return web.json_response({
+            'piIp': public_ip,
+            'piPort': public_port,
+            'sdpInfo': sdp_info,
+            'natType': 'symmetric' if nat_type_symmetric else 'cone',
+        }, headers=CORS_HEADERS)
+        
+    except Exception as e:
+        logger.error(f"Stream punch error: {e}")
+        return web.json_response(
+            {"error": str(e)},
+            status=500,
+            headers=CORS_HEADERS
+        )
+
+
+async def handle_stream_status(request):
+    """Return current hole punch status (public endpoint, NAT type)."""
+    return web.json_response({
+        'ready': hole_punch_sock is not None and public_ip is not None,
+        'piIp': public_ip,
+        'piPort': public_port,
+        'natType': 'symmetric' if nat_type_symmetric else 'cone',
+    }, headers=CORS_HEADERS)
+
+
+class RTSPForwarder:
+    """RTSP client that forwards RTP packets to hole-punched clients.
+    
+    Connects to MediaMTX RTSP on demand, receives RTP, forwards to clients.
+    Automatically stops when no clients remain.
+    """
+    
+    def __init__(self, rtsp_url: str, rtp_port: int):
+        self.rtsp_url = rtsp_url
+        self.rtp_port = rtp_port
+        self.reader = None
+        self.writer = None
+        self.session_id = None
+        self.cseq = 0
+        self.running = False
+        self.rtp_sock = None
+        self.forward_task = None
+        self.server_rtp_port = None
+        
+    async def start(self):
+        """Start RTSP session and begin forwarding RTP."""
+        if self.running:
+            return
+            
+        logger.info(f"Starting RTSP forwarder to {self.rtsp_url}")
+        
+        try:
+            # Parse RTSP URL
+            url = self.rtsp_url
+            if url.startswith('rtsp://'):
+                url = url[7:]
+            host_port, path = url.split('/', 1) if '/' in url else (url, '')
+            if ':' in host_port:
+                host, port = host_port.split(':')
+                port = int(port)
+            else:
+                host, port = host_port, 554
+            
+            # Connect TCP
+            self.reader, self.writer = await asyncio.open_connection(host, port)
+            logger.info(f"RTSP connected to {host}:{port}")
+            
+            # Create RTP receive socket
+            self.rtp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.rtp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.rtp_sock.bind(('0.0.0.0', self.rtp_port))
+            self.rtp_sock.setblocking(False)
+            logger.info(f"RTP socket bound to port {self.rtp_port}")
+            
+            # RTSP handshake
+            await self._describe()
+            await self._setup()
+            await self._play()
+            
+            self.running = True
+            
+            # Start RTP forwarding loop
+            self.forward_task = asyncio.create_task(self._forward_loop())
+            logger.info("RTSP forwarder started")
+            
+        except Exception as e:
+            logger.error(f"RTSP forwarder start failed: {e}")
+            await self.stop()
+            raise
+    
+    async def stop(self):
+        """Stop RTSP session and RTP forwarding."""
+        if not self.running and not self.writer:
+            return
+            
+        logger.info("Stopping RTSP forwarder")
+        self.running = False
+        
+        # Cancel forward task
+        if self.forward_task:
+            self.forward_task.cancel()
+            try:
+                await self.forward_task
+            except asyncio.CancelledError:
+                pass
+            self.forward_task = None
+        
+        # Send TEARDOWN
+        if self.writer and self.session_id:
+            try:
+                await self._send_request('TEARDOWN', self.rtsp_url)
+            except:
+                pass
+        
+        # Close connections
+        if self.writer:
+            self.writer.close()
+            try:
+                await self.writer.wait_closed()
+            except:
+                pass
+            self.writer = None
+            self.reader = None
+        
+        if self.rtp_sock:
+            self.rtp_sock.close()
+            self.rtp_sock = None
+            
+        self.session_id = None
+        logger.info("RTSP forwarder stopped")
+    
+    async def _send_request(self, method: str, url: str, extra_headers: dict = None) -> tuple:
+        """Send RTSP request and wait for response."""
+        self.cseq += 1
+        
+        headers = [
+            f"{method} {url} RTSP/1.0",
+            f"CSeq: {self.cseq}",
+            "User-Agent: PiRelay/1.0",
+        ]
+        
+        if self.session_id:
+            headers.append(f"Session: {self.session_id}")
+        
+        if extra_headers:
+            for k, v in extra_headers.items():
+                headers.append(f"{k}: {v}")
+        
+        request = '\r\n'.join(headers) + '\r\n\r\n'
+        self.writer.write(request.encode())
+        await self.writer.drain()
+        
+        # Read response
+        response_lines = []
+        content_length = 0
+        
+        while True:
+            line = await self.reader.readline()
+            line = line.decode().rstrip('\r\n')
+            if not line:
+                break
+            response_lines.append(line)
+            if line.lower().startswith('content-length:'):
+                content_length = int(line.split(':')[1].strip())
+        
+        # Read body if present
+        body = ''
+        if content_length > 0:
+            body = (await self.reader.read(content_length)).decode()
+        
+        # Parse status
+        status_line = response_lines[0] if response_lines else ''
+        status_code = 0
+        if 'RTSP/1.0' in status_line:
+            parts = status_line.split(' ')
+            if len(parts) >= 2:
+                status_code = int(parts[1])
+        
+        # Parse headers into dict
+        headers_dict = {}
+        for line in response_lines[1:]:
+            if ':' in line:
+                k, v = line.split(':', 1)
+                headers_dict[k.strip().lower()] = v.strip()
+        
+        # Extract session ID
+        if 'session' in headers_dict:
+            self.session_id = headers_dict['session'].split(';')[0]
+        
+        return status_code, headers_dict, body
+    
+    async def _describe(self):
+        """DESCRIBE request to get SDP."""
+        global cached_sprop_parameter_sets
+        
+        status, headers, body = await self._send_request(
+            'DESCRIBE', self.rtsp_url,
+            {'Accept': 'application/sdp'}
+        )
+        
+        if status != 200:
+            raise Exception(f"DESCRIBE failed: {status}")
+        
+        # Parse track control and sprop-parameter-sets from SDP
+        self.track_url = None
+        for line in body.split('\n'):
+            line = line.strip()
+            if line.startswith('a=control:') and 'track' in line.lower():
+                control = line[10:]
+                if control.startswith('rtsp://'):
+                    self.track_url = control
+                else:
+                    # Relative URL
+                    base = self.rtsp_url.rstrip('/') + '/'
+                    self.track_url = base + control
+            # Extract sprop-parameter-sets (SPS/PPS in base64)
+            elif 'sprop-parameter-sets=' in line:
+                # Format: a=fmtp:96 ... sprop-parameter-sets=<base64>,<base64> ...
+                match = re.search(r'sprop-parameter-sets=([A-Za-z0-9+/=,]+)', line)
+                if match:
+                    cached_sprop_parameter_sets = match.group(1)
+                    logger.info(f"Cached sprop-parameter-sets from SDP: {cached_sprop_parameter_sets[:50]}...")
+        
+        if not self.track_url:
+            # Default to trackID=0
+            self.track_url = self.rtsp_url.rstrip('/') + '/trackID=0'
+        
+        logger.info(f"RTSP track URL: {self.track_url}")
+    
+    async def _setup(self):
+        """SETUP request to configure RTP transport."""
+        status, headers, body = await self._send_request(
+            'SETUP', self.track_url,
+            {'Transport': f'RTP/AVP;unicast;client_port={self.rtp_port}-{self.rtp_port + 1}'}
+        )
+        
+        if status != 200:
+            raise Exception(f"SETUP failed: {status}")
+        
+        # Parse server_port from Transport header
+        transport = headers.get('transport', '')
+        match = re.search(r'server_port=(\d+)', transport)
+        self.server_rtp_port = int(match.group(1)) if match else 8000
+        
+        logger.info(f"RTSP session: {self.session_id}, server RTP port: {self.server_rtp_port}")
+    
+    async def _play(self):
+        """PLAY request to start streaming."""
+        status, headers, body = await self._send_request(
+            'PLAY', self.rtsp_url,
+            {'Range': 'npt=0.000-'}
+        )
+        
+        if status != 200:
+            raise Exception(f"PLAY failed: {status}")
+        
+        logger.info("RTSP PLAY started")
+    
+    async def _forward_loop(self):
+        """Receive RTP and forward to hole-punched clients."""
+        global active_punch_clients, hole_punch_sock
+        
+        loop = asyncio.get_running_loop()
+        packets_forwarded = 0
+        last_log_time = time.time()
+        first_packet_sent = {}  # Track first packet per client for logging
+        
+        while self.running:
+            try:
+                # Receive RTP packet
+                data = await asyncio.wait_for(
+                    loop.sock_recv(self.rtp_sock, 1500),
+                    timeout=5.0
+                )
+                
+                if not data or not hole_punch_sock:
+                    continue
+                
+                # Clean up stale clients (no activity for 30s)
+                now = time.time()
+                stale_clients = [
+                    client for client, last_time in active_punch_clients.items()
+                    if now - last_time > 30
+                ]
+                for client in stale_clients:
+                    del active_punch_clients[client]
+                    logger.info(f"Removed stale client: {client}")
+                
+                # Forward to all active clients
+                for (client_ip, client_port) in list(active_punch_clients.keys()):
+                    try:
+                        hole_punch_sock.sendto(data, (client_ip, client_port))
+                        packets_forwarded += 1
+                        # Log first RTP packet to each client
+                        client_key = (client_ip, client_port)
+                        if client_key not in first_packet_sent:
+                            first_packet_sent[client_key] = True
+                            logger.info(f"[RTP] First packet sent to {client_ip}:{client_port}, size={len(data)}")
+                    except Exception as e:
+                        logger.warning(f"Failed to forward RTP to {client_ip}:{client_port}: {e}")
+                
+                # Log stats every 10 seconds
+                if now - last_log_time > 10:
+                    logger.info(f"[RTP] Forwarded {packets_forwarded} packets to {len(active_punch_clients)} clients: {list(active_punch_clients.keys())}")
+                    packets_forwarded = 0
+                    last_log_time = now
+                
+                # Stop if no clients
+                if not active_punch_clients:
+                    logger.info("No active clients, stopping RTSP forwarder")
+                    asyncio.create_task(self.stop())
+                    break
+                    
+            except asyncio.TimeoutError:
+                # Check if we should stop (no clients)
+                if not active_punch_clients:
+                    logger.info("No active clients, stopping RTSP forwarder")
+                    asyncio.create_task(self.stop())
+                    break
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"RTP forward error: {e}")
+                await asyncio.sleep(0.1)
+
+
+async def ensure_rtsp_forwarder():
+    """Start RTSP forwarder if not running and clients exist."""
+    global rtp_forwarder, active_punch_clients
+    
+    if not active_punch_clients:
+        return
+    
+    if rtp_forwarder is None:
+        rtp_forwarder = RTSPForwarder(MEDIAMTX_RTSP_URL, RTP_LOCAL_PORT)
+    
+    if not rtp_forwarder.running:
+        try:
+            await rtp_forwarder.start()
+        except Exception as e:
+            logger.error(f"Failed to start RTSP forwarder: {e}")
+
+
+async def hole_punch_receiver_loop():
+    """Listen for incoming packets on hole punch socket.
+    
+    When we receive a packet from a client, it confirms the hole is punched.
+    We update their last activity time.
+    
+    IMPORTANT: Filter out STUN server responses - they use the same socket!
+    """
+    global active_punch_clients, hole_punch_sock
+    
+    loop = asyncio.get_running_loop()
+    
+    # Resolve STUN server IPs to filter them out
+    # These respond to our STUN queries on the same socket
+    stun_server_ips = set()
+    for hostname, port in [("stun.cloudflare.com", 3478), ("stun.l.google.com", 19302)]:
+        try:
+            import socket as sock_module
+            ips = sock_module.getaddrinfo(hostname, port, sock_module.AF_INET)
+            for ip_info in ips:
+                stun_server_ips.add(ip_info[4][0])
+        except Exception as e:
+            logger.warning(f"Failed to resolve STUN server {hostname}: {e}")
+    logger.info(f"[HolePunch] STUN server IPs to filter: {stun_server_ips}")
+    
+    while True:
+        if not hole_punch_sock:
+            await asyncio.sleep(1)
+            continue
+        
+        try:
+            # Use wait_for with timeout instead of blocking recv
+            data, addr = await asyncio.wait_for(
+                loop.sock_recvfrom(hole_punch_sock, 1500),
+                timeout=3.0  # 3 second timeout
+            )
+            client_ip, client_port = addr
+            
+            # Filter out STUN server responses - they're not real clients!
+            if client_ip in stun_server_ips:
+                logger.debug(f"[HolePunch] Ignoring STUN response from {client_ip}:{client_port}")
+                continue
+            
+            # Log ALL incoming packets for debugging
+            logger.debug(f"[HolePunch] Received packet from {client_ip}:{client_port}, size={len(data)}")
+            
+            # Update activity time (confirms hole is punched)
+            is_new_client = (client_ip, client_port) not in active_punch_clients
+            active_punch_clients[(client_ip, client_port)] = time.time()
+            
+            if is_new_client:
+                logger.info(f"[HolePunch] NEW client confirmed: {client_ip}:{client_port}, total clients: {len(active_punch_clients)}")
+                # Start RTSP forwarder if not running
+                await ensure_rtsp_forwarder()
+            else:
+                # Log keepalive packets (less frequently)
+                logger.debug(f"[HolePunch] Keepalive from {client_ip}:{client_port}")
+                
+        except asyncio.TimeoutError:
+            # Normal - no packets received, continue waiting
+            pass
+        except BlockingIOError:
+            await asyncio.sleep(0.001)
+        except Exception as e:
+            logger.error(f"Hole punch receiver error: {e}")
+            await asyncio.sleep(0.1)
+
+
 # ----- Main -----
 
 async def main():
@@ -2310,6 +2954,17 @@ async def main():
     direction_est = DirectionEstimator()
     logger.info("Direction estimator initialized")
     
+    # Initialize UDP hole punch system
+    try:
+        await init_hole_punch_socket()
+        # Start STUN refresh loop
+        stun_refresh_task = asyncio.create_task(stun_refresh_loop())
+        # Hole punch receiver and RTP forward will be started AFTER HTTP server
+        logger.info("UDP hole punch socket initialized (tasks start after HTTP server)")
+    except Exception as e:
+        logger.warning(f"UDP hole punch initialization failed: {e}")
+        logger.warning("Hole punch streaming will not be available")
+    
     # Start GPS reader loop
     gps_task = asyncio.create_task(gps_reader_loop())
     
@@ -2344,6 +2999,11 @@ async def main():
     app.router.add_post("/admin/set-traction", handle_set_traction_control)
     app.router.add_options("/admin/set-traction", handle_options)
     
+    # UDP hole punch routes (for IWA client direct streaming)
+    app.router.add_post("/stream/punch", handle_stream_punch)
+    app.router.add_options("/stream/punch", handle_options)
+    app.router.add_get("/stream/status", handle_stream_status)
+    
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", HTTP_PORT)
@@ -2358,6 +3018,13 @@ async def main():
     logger.info(f"  POST /admin/stop-race           - Stop race")
     logger.info(f"  POST /admin/kick-player         - Kick player & revoke token")
     logger.info(f"  POST /admin/set-traction        - Toggle traction control")
+    logger.info(f"  POST /stream/punch?token=...    - UDP hole punch (IWA client)")
+    logger.info(f"  GET  /stream/status             - Hole punch status")
+    
+    # Now start hole punch background tasks (after HTTP server is up)
+    if hole_punch_sock:
+        asyncio.create_task(hole_punch_receiver_loop())
+        logger.info("Hole punch receiver started (RTSP forwarder starts on-demand)")
     
     # Keep running
     while True:
