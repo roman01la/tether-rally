@@ -372,7 +372,11 @@ STUN_REFRESH_INTERVAL = 20  # seconds
 stun_refresh_task = None
 
 # RTP forwarding state
-rtp_forwarder = None  # RTSPForwarder instance
+rtp_forwarder = None  # RTSPForwarder instance (legacy, kept for fallback)
+fec_sender_process = None  # Native FEC sender subprocess
+fec_sender_target = None  # (client_ip, client_port) the FEC sender is targeting
+USE_FEC_SENDER = True  # Use native FEC sender instead of RTSP forwarder
+FEC_SENDER_PATH = "/home/pi/rtp-fec-sender/build/rtp-fec-sender"
 MEDIAMTX_RTSP_URL = "rtsp://127.0.0.1:8554/cam"
 RTP_LOCAL_PORT = 5006  # Local port for receiving RTP from MediaMTX
 
@@ -2442,7 +2446,13 @@ async def handle_stream_punch(request):
         active_punch_clients[(client_ip, client_port)] = time.time()
         logger.info(f"[HolePunch] Added client {client_ip}:{client_port} to active_punch_clients, total: {len(active_punch_clients)}")
         
-        # Start RTSP forwarder immediately - this also caches sprop-parameter-sets
+        # IMPORTANT: Send punch packets BEFORE starting FEC sender
+        # This opens the NAT pinhole while we still have the original socket
+        # that was used for STUN discovery (same NAT mapping)
+        if hole_punch_sock:
+            await send_punch_packets(client_ip, client_port, count=3)
+        
+        # Now start FEC sender (this will close hole_punch_sock)
         await ensure_rtsp_forwarder()
         
         # Build sdp_info with cached sprop-parameter-sets from RTSP DESCRIBE
@@ -2458,13 +2468,6 @@ async def handle_stream_punch(request):
             logger.info(f"Sending sprop-parameter-sets to client: {cached_sprop_parameter_sets[:50]}...")
         else:
             logger.warning("No sprop-parameter-sets cached, client will configure from stream")
-        
-        # Start sending punch packets BEFORE responding
-        # This ensures our NAT opens the pinhole before client tries to send
-        asyncio.create_task(send_punch_packets(client_ip, client_port))
-        
-        # Small delay to ensure some packets are sent before response
-        await asyncio.sleep(0.05)
         
         return web.json_response({
             'piIp': public_ip,
@@ -2490,6 +2493,64 @@ async def handle_stream_status(request):
         'piPort': public_port,
         'natType': 'symmetric' if nat_type_symmetric else 'cone',
     }, headers=CORS_HEADERS)
+
+
+async def handle_stream_stop(request):
+    """Handle stream stop request from IWA client.
+    
+    This cleans up the FEC sender and re-opens the hole punch socket
+    so a new connection can be established.
+    """
+    global active_punch_clients
+    
+    # Validate token
+    token = request.query.get('token', '')
+    if not validate_token(token):
+        logger.warning("Invalid token for stream stop")
+        return web.json_response(
+            {"error": "Invalid or expired token"},
+            status=401,
+            headers=CORS_HEADERS
+        )
+    
+    try:
+        # Get client info from request body (optional)
+        try:
+            body = await request.json()
+            client_ip = body.get('clientIp')
+            client_port = body.get('clientPort')
+            if client_ip and client_port:
+                client_key = (client_ip, int(client_port))
+                if client_key in active_punch_clients:
+                    del active_punch_clients[client_key]
+                    logger.info(f"Removed client {client_key} from active list")
+        except:
+            pass  # Body is optional
+        
+        # Clear all clients and stop FEC sender
+        active_punch_clients.clear()
+        logger.info("Cleared all punch clients")
+        
+        if USE_FEC_SENDER:
+            await stop_fec_sender()
+            await reopen_hole_punch_socket()
+            logger.info("FEC sender stopped, socket re-opened")
+        elif rtp_forwarder and rtp_forwarder.running:
+            await rtp_forwarder.stop()
+            logger.info("RTP forwarder stopped")
+        
+        return web.json_response({
+            'success': True,
+            'ready': hole_punch_sock is not None,
+        }, headers=CORS_HEADERS)
+        
+    except Exception as e:
+        logger.error(f"Stream stop error: {e}")
+        return web.json_response(
+            {"error": str(e)},
+            status=500,
+            headers=CORS_HEADERS
+        )
 
 
 class RTSPForwarder:
@@ -2793,21 +2854,164 @@ class RTSPForwarder:
                 await asyncio.sleep(0.1)
 
 
-async def ensure_rtsp_forwarder():
-    """Start RTSP forwarder if not running and clients exist."""
-    global rtp_forwarder, active_punch_clients
+async def start_fec_sender(client_ip: str, client_port: int):
+    """Start native FEC sender process for a client.
+    
+    The FEC sender uses GStreamer to capture video directly from libcamera,
+    applies Reed-Solomon FEC encoding, and sends UDP packets to the client.
+    
+    IMPORTANT: We must bind to the same port used for hole punching so
+    packets go through the NAT pinhole.
+    """
+    global fec_sender_process, fec_sender_target, hole_punch_sock
+    
+    # Kill any existing sender
+    await stop_fec_sender()
+    
+    if not os.path.exists(FEC_SENDER_PATH):
+        logger.error(f"FEC sender not found: {FEC_SENDER_PATH}")
+        return False
+    
+    # Close hole punch socket so FEC sender can bind to same port
+    if hole_punch_sock:
+        try:
+            hole_punch_sock.close()
+            logger.info("Closed hole punch socket for FEC sender")
+        except Exception as e:
+            logger.warning(f"Error closing hole punch socket: {e}")
+        hole_punch_sock = None
+    
+    # Small delay to ensure socket is released by OS
+    await asyncio.sleep(0.1)
+    
+    try:
+        logger.info(f"Starting FEC sender: {FEC_SENDER_PATH} {client_ip} {client_port} {hole_punch_port}")
+        fec_sender_process = await asyncio.create_subprocess_exec(
+            FEC_SENDER_PATH,
+            client_ip,
+            str(client_port),
+            str(hole_punch_port),  # Source port for NAT traversal
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        
+        # Track target client
+        fec_sender_target = (client_ip, client_port)
+        
+        # Start log reader tasks
+        asyncio.create_task(_read_fec_sender_output(fec_sender_process.stdout, "FEC-OUT"))
+        asyncio.create_task(_read_fec_sender_output(fec_sender_process.stderr, "FEC-ERR"))
+        
+        logger.info(f"FEC sender started with PID {fec_sender_process.pid}")
+        
+        # Check if process exited immediately (indicates startup failure)
+        await asyncio.sleep(0.2)
+        if fec_sender_process.returncode is not None:
+            logger.error(f"FEC sender exited immediately with code {fec_sender_process.returncode}")
+            return False
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to start FEC sender: {e}")
+        return False
+
+
+async def _read_fec_sender_output(stream, prefix: str):
+    """Read and log FEC sender output."""
+    while True:
+        line = await stream.readline()
+        if not line:
+            break
+        logger.info(f"[{prefix}] {line.decode().rstrip()}")
+
+
+async def stop_fec_sender():
+    """Stop the FEC sender process. Does NOT re-open hole punch socket."""
+    global fec_sender_process, fec_sender_target, hole_punch_sock
+    
+    if fec_sender_process is None:
+        return
+    
+    # Capture reference locally to avoid race with concurrent calls
+    proc = fec_sender_process
+    fec_sender_process = None
+    fec_sender_target = None
+    
+    try:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+        logger.info("FEC sender stopped")
+    except Exception as e:
+        logger.warning(f"Error stopping FEC sender: {e}")
+
+
+async def reopen_hole_punch_socket():
+    """Re-open hole punch socket after FEC sender stops."""
+    global hole_punch_sock, hole_punch_port
+    
+    if hole_punch_sock is not None:
+        return  # Already open
+    
+    try:
+        hole_punch_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        hole_punch_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        hole_punch_sock.bind(('0.0.0.0', hole_punch_port))
+        hole_punch_sock.setblocking(False)
+        logger.info(f"Re-opened hole punch socket on port {hole_punch_port}")
+    except Exception as e:
+        logger.error(f"Failed to re-open hole punch socket: {e}")
+
+
+async def ensure_video_sender():
+    """Start video sender (FEC or RTSP) if not running and clients exist."""
+    global rtp_forwarder, fec_sender_process, fec_sender_target, active_punch_clients
     
     if not active_punch_clients:
         return
     
-    if rtp_forwarder is None:
-        rtp_forwarder = RTSPForwarder(MEDIAMTX_RTSP_URL, RTP_LOCAL_PORT)
+    # Get the first active client (FEC sender only supports one client currently)
+    client = next(iter(active_punch_clients.keys()))
+    client_ip, client_port = client
     
-    if not rtp_forwarder.running:
-        try:
-            await rtp_forwarder.start()
-        except Exception as e:
-            logger.error(f"Failed to start RTSP forwarder: {e}")
+    if USE_FEC_SENDER:
+        # Check if FEC sender needs (re)start:
+        # 1. Not running at all
+        # 2. Process exited
+        # 3. Target client changed (reconnect with new port)
+        needs_restart = (
+            fec_sender_process is None or 
+            fec_sender_process.returncode is not None or
+            fec_sender_target != (client_ip, client_port)
+        )
+        
+        if needs_restart:
+            if fec_sender_target and fec_sender_target != (client_ip, client_port):
+                logger.info(f"Client changed from {fec_sender_target} to {(client_ip, client_port)}, restarting FEC sender")
+            await start_fec_sender(client_ip, client_port)
+    else:
+        # Fallback to RTSP forwarder (no FEC)
+        if rtp_forwarder is None:
+            rtp_forwarder = RTSPForwarder(MEDIAMTX_RTSP_URL, RTP_LOCAL_PORT)
+        
+        if not rtp_forwarder.running:
+            try:
+                await rtp_forwarder.start()
+            except Exception as e:
+                logger.error(f"Failed to start RTSP forwarder: {e}")
+
+
+async def ensure_rtsp_forwarder():
+    """Start RTSP forwarder if not running and clients exist.
+    
+    DEPRECATED: Use ensure_video_sender() instead.
+    This is kept for backward compatibility.
+    """
+    await ensure_video_sender()
 
 
 async def hole_punch_receiver_loop():
@@ -2870,12 +3074,40 @@ async def hole_punch_receiver_loop():
                 
         except asyncio.TimeoutError:
             # Normal - no packets received, continue waiting
-            pass
+            # Also check for stale clients periodically
+            await cleanup_stale_clients()
         except BlockingIOError:
             await asyncio.sleep(0.001)
         except Exception as e:
             logger.error(f"Hole punch receiver error: {e}")
             await asyncio.sleep(0.1)
+
+
+async def cleanup_stale_clients():
+    """Remove stale clients and stop video sender if no clients remain."""
+    global active_punch_clients, fec_sender_process, rtp_forwarder
+    
+    if not active_punch_clients:
+        return
+    
+    now = time.time()
+    stale_clients = [
+        client for client, last_time in active_punch_clients.items()
+        if now - last_time > 30
+    ]
+    
+    for client in stale_clients:
+        del active_punch_clients[client]
+        logger.info(f"Removed stale client: {client}")
+    
+    # Stop video sender if no clients remain
+    if not active_punch_clients:
+        logger.info("No active clients, stopping video sender")
+        if USE_FEC_SENDER:
+            await stop_fec_sender()
+            await reopen_hole_punch_socket()
+        elif rtp_forwarder and rtp_forwarder.running:
+            await rtp_forwarder.stop()
 
 
 # ----- Main -----
@@ -3003,6 +3235,8 @@ async def main():
     app.router.add_post("/stream/punch", handle_stream_punch)
     app.router.add_options("/stream/punch", handle_options)
     app.router.add_get("/stream/status", handle_stream_status)
+    app.router.add_post("/stream/stop", handle_stream_stop)
+    app.router.add_options("/stream/stop", handle_options)
     
     runner = web.AppRunner(app)
     await runner.setup()

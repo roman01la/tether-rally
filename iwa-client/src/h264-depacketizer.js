@@ -11,7 +11,9 @@
 export class H264Depacketizer extends EventTarget {
   constructor() {
     super();
-    this.fuBuffer = null; // For FU-A reassembly
+    this.fuFragments = null; // Array of Uint8Arrays for FU-A reassembly
+    this.fuNalHeader = 0; // NAL header for current FU-A
+    this.fuTotalSize = 0; // Total size of fragments collected
     this.fuTimestamp = null;
     this.lastSeq = -1;
     this.DISCONTINUITY_THRESHOLD = 5; // Reset FU-A if gap exceeds this
@@ -53,10 +55,11 @@ export class H264Depacketizer extends EventTarget {
         }
 
         // Large gap indicates serious disruption - reset FU-A state
-        if (gap > this.DISCONTINUITY_THRESHOLD && this.fuBuffer !== null) {
+        if (gap > this.DISCONTINUITY_THRESHOLD && this.fuFragments !== null) {
           this.log(`Discarding incomplete FU-A due to large gap`);
-          this.fuBuffer = null;
+          this.fuFragments = null;
           this.fuTimestamp = null;
+          this.fuTotalSize = 0;
         }
       }
     }
@@ -94,25 +97,38 @@ export class H264Depacketizer extends EventTarget {
     // Reconstruct NAL header: forbidden_bit + nri from FU indicator, type from FU header
     const nalHeader = (fuIndicator & 0xe0) | nalType;
 
-    const fragmentData = payload.slice(2);
+    // Use subarray for zero-copy view of fragment data
+    const fragmentData = payload.subarray(2);
 
     if (startBit) {
-      // Start of fragmented NAL
-      this.fuBuffer = [nalHeader, ...fragmentData];
+      // Start of fragmented NAL - collect fragments as Uint8Arrays
+      this.fuFragments = [fragmentData];
+      this.fuNalHeader = nalHeader;
+      this.fuTotalSize = fragmentData.length;
       this.fuTimestamp = timestamp;
-    } else if (this.fuBuffer !== null) {
+    } else if (this.fuFragments !== null) {
       // Continuation
       if (timestamp !== this.fuTimestamp) {
         // Timestamp changed mid-fragment, discard
-        this.fuBuffer = null;
+        this.fuFragments = null;
+        this.fuTotalSize = 0;
         return;
       }
-      this.fuBuffer.push(...fragmentData);
+      this.fuFragments.push(fragmentData);
+      this.fuTotalSize += fragmentData.length;
 
       if (endBit) {
-        // End of fragmented NAL
-        this.emitNAL(new Uint8Array(this.fuBuffer), timestamp);
-        this.fuBuffer = null;
+        // End of fragmented NAL - concatenate all fragments once
+        const nalUnit = new Uint8Array(1 + this.fuTotalSize);
+        nalUnit[0] = this.fuNalHeader;
+        let offset = 1;
+        for (const frag of this.fuFragments) {
+          nalUnit.set(frag, offset);
+          offset += frag.length;
+        }
+        this.emitNAL(nalUnit, timestamp);
+        this.fuFragments = null;
+        this.fuTotalSize = 0;
       }
     }
   }
@@ -131,7 +147,8 @@ export class H264Depacketizer extends EventTarget {
         break;
       }
 
-      const nalUnit = payload.slice(offset, offset + nalSize);
+      // Use subarray for zero-copy view - emitNAL doesn't modify data
+      const nalUnit = payload.subarray(offset, offset + nalSize);
       this.emitNAL(nalUnit, timestamp);
       offset += nalSize;
     }
@@ -155,7 +172,9 @@ export class H264Depacketizer extends EventTarget {
   }
 
   reset() {
-    this.fuBuffer = null;
+    this.fuFragments = null;
+    this.fuNalHeader = 0;
+    this.fuTotalSize = 0;
     this.fuTimestamp = null;
     this.lastSeq = -1;
   }

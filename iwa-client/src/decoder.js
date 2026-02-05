@@ -40,6 +40,11 @@ export class H264Decoder extends EventTarget {
     this.description = null; // Store AVCC description for reconfiguration
     this.recovering = false; // Prevent recursive recovery attempts
 
+    // WFB-ng style: deadline-based frame dropping
+    this.MAX_DECODE_QUEUE = 2; // Max frames queued in decoder
+    this.MAX_FRAME_AGE_MS = 50; // Drop frames older than 50ms
+    this.droppedFrames = 0;
+
     this.initWebGL();
   }
 
@@ -224,6 +229,15 @@ export class H264Decoder extends EventTarget {
   handleFrame(frame) {
     this.frameCount++;
 
+    // WFB-ng style: drop frames if decoder queue is backed up
+    // This prevents the "fast forward" effect after network hiccups
+    if (this.decoder && this.decoder.decodeQueueSize > 1) {
+      // Too many frames queued - drop this one to catch up
+      frame.close();
+      this.droppedFrames++;
+      return;
+    }
+
     // Update canvas size if needed
     if (
       this.canvas.width !== frame.displayWidth ||
@@ -296,8 +310,37 @@ export class H264Decoder extends EventTarget {
   }
 
   // Decode a complete access unit (may contain multiple NALs)
-  decodeAccessUnit(nalUnits, timestamp) {
+  decodeAccessUnit(nalUnits, timestamp, arrivalTime = null) {
     if (!this.configured || nalUnits.length === 0) return;
+
+    // WFB-ng style: check if frame is too old (deadline-based dropping)
+    if (arrivalTime !== null) {
+      const age = performance.now() - arrivalTime;
+      if (age > this.MAX_FRAME_AGE_MS) {
+        this.droppedFrames++;
+        if (this.droppedFrames % 100 === 1) {
+          this.log(
+            `Dropped late frame (age=${age.toFixed(1)}ms, total dropped=${this.droppedFrames})`,
+          );
+        }
+        return;
+      }
+    }
+
+    // WFB-ng style: check decoder queue depth to prevent backup
+    if (this.decoder && this.decoder.decodeQueueSize > this.MAX_DECODE_QUEUE) {
+      this.droppedFrames++;
+      // Only drop non-keyframes to avoid losing sync
+      const isKeyframe = nalUnits.some((n) => (n[0] & 0x1f) === 5);
+      if (!isKeyframe) {
+        if (this.droppedFrames % 100 === 1) {
+          this.log(
+            `Dropped frame (queue=${this.decoder.decodeQueueSize}, total dropped=${this.droppedFrames})`,
+          );
+        }
+        return;
+      }
+    }
 
     // Check decoder state and recover if needed
     if (!this.decoder || this.decoder.state === "closed") {

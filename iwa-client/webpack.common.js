@@ -23,7 +23,7 @@ module.exports = {
       chunks: ["main"],
     }),
     new CopyPlugin({
-      patterns: [{ from: "assets" }],
+      patterns: [{ from: "assets" }, { from: "src/fec.wasm", to: "fec.wasm" }],
     }),
   ],
   resolve: {

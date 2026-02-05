@@ -3,10 +3,13 @@
  * Parses RTP headers and emits packets for depacketization
  * Tracks statistics: bitrate, packet loss, jitter
  * Supports UDP hole punching for NAT traversal
+ * Supports FEC (Forward Error Correction) decoding via zfec WASM
  */
 
+import { FECDecoder, FECGroupBuffer } from "./fec-decoder.js";
+
 export class RTPReceiver extends EventTarget {
-  constructor(localPort = 5000) {
+  constructor(localPort = 5000, enableFEC = true) {
     super();
     this.localPort = localPort;
     this.socket = null;
@@ -16,14 +19,20 @@ export class RTPReceiver extends EventTarget {
     this.running = false;
     this.punching = false;
 
+    // FEC (Forward Error Correction) support
+    this.enableFEC = enableFEC;
+    this.fecDecoder = null;
+    this.fecGroupBuffer = null;
+    this.fecReady = false;
+
     // Reorder buffer to handle out-of-order packets
     // Holds packets indexed by sequence number, flushes in order
     this.reorderBuffer = new Map();
     this.reorderTimeout = null;
     this.expectedSeq = -1;
-    this.REORDER_WINDOW = 20; // Max packets to buffer (reduced for lower latency)
-    this.REORDER_DELAY_MS = 10; // Max time to wait for missing packet (reduced for lower latency)
-    this.LATE_THRESHOLD = 10; // Drop packets arriving this far behind expectedSeq
+    this.REORDER_WINDOW = 30; // Max packets to buffer for reordering
+    this.REORDER_DELAY_MS = 15; // Max time to wait for missing packet
+    this.LATE_THRESHOLD = 15; // Drop packets arriving this far behind expectedSeq
 
     // Stats tracking
     this.stats = {
@@ -49,6 +58,51 @@ export class RTPReceiver extends EventTarget {
 
   log(msg) {
     this.dispatchEvent(new CustomEvent("log", { detail: msg }));
+  }
+
+  /**
+   * Initialize FEC decoder (must be called before start/bind if enableFEC=true)
+   * @param {string} wasmPath - Path to fec.wasm file
+   */
+  async initFEC(wasmPath = "./fec.wasm") {
+    if (!this.enableFEC) {
+      this.log("FEC disabled, skipping initialization");
+      return;
+    }
+
+    this.log("Initializing FEC decoder...");
+    try {
+      this.fecDecoder = new FECDecoder(wasmPath);
+      await this.fecDecoder.init();
+
+      // Create FEC group buffer with callback to handle recovered packets
+      this.fecGroupBuffer = new FECGroupBuffer(
+        this.fecDecoder,
+        (groupId, dataPackets, wasDecoded) => {
+          // Guard against callback firing after stop()
+          if (!this.running) return;
+
+          // Process each recovered RTP packet
+          for (const { index, data } of dataPackets) {
+            if (!data) continue;
+            const packet = this.parseRTPPacket(data);
+            if (packet) {
+              this.updateStats(packet, data.byteLength);
+              this.bufferPacket(packet);
+            }
+          }
+        },
+      );
+
+      this.fecReady = true;
+      this.log("FEC decoder initialized successfully");
+    } catch (err) {
+      this.log(
+        `FEC initialization failed: ${err.message} - falling back to non-FEC mode`,
+      );
+      this.enableFEC = false;
+      this.fecReady = false;
+    }
   }
 
   resetStats() {
@@ -352,10 +406,16 @@ export class RTPReceiver extends EventTarget {
           break;
         }
 
-        const packet = this.parseRTPPacket(value.data);
-        if (packet) {
-          this.updateStats(packet, value.data.byteLength);
-          this.bufferPacket(packet);
+        // Route through FEC decoder if enabled and ready
+        if (this.enableFEC && this.fecReady) {
+          this.handleFECPacket(value.data);
+        } else {
+          // No FEC - parse RTP directly
+          const packet = this.parseRTPPacket(value.data);
+          if (packet) {
+            this.updateStats(packet, value.data.byteLength);
+            this.bufferPacket(packet);
+          }
         }
       }
     } catch (err) {
@@ -370,6 +430,59 @@ export class RTPReceiver extends EventTarget {
       }
       this.reader = null;
     }
+  }
+
+  /**
+   * Parse and handle FEC-wrapped packets.
+   * FEC header format: group_id(2B) | index(1B) | k(1B) | n(1B) | RTP payload
+   * @param {Uint8Array} data - Raw UDP packet data
+   */
+  handleFECPacket(data) {
+    // Check if FEC buffer is still valid (may be destroyed during shutdown)
+    if (!this.fecGroupBuffer) {
+      return;
+    }
+
+    // Minimum FEC header (5 bytes) + minimum RTP header (12 bytes)
+    if (data.byteLength < 17) {
+      // Too short - try parsing as raw RTP (non-FEC fallback)
+      const packet = this.parseRTPPacket(data);
+      if (packet) {
+        this.updateStats(packet, data.byteLength);
+        this.bufferPacket(packet);
+      }
+      return;
+    }
+
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+
+    // Parse FEC header
+    const groupId = view.getUint16(0, false); // big-endian
+    const index = view.getUint8(2);
+    const k = view.getUint8(3);
+    const n = view.getUint8(4);
+
+    // Validate FEC parameters
+    if (k < 1 || n < k || index >= n) {
+      // Invalid FEC header - try raw RTP
+      const packet = this.parseRTPPacket(data);
+      if (packet) {
+        this.updateStats(packet, data.byteLength);
+        this.bufferPacket(packet);
+      }
+      return;
+    }
+
+    // Extract RTP payload (after 5-byte FEC header)
+    const rtpPayload = new Uint8Array(
+      data.buffer,
+      data.byteOffset + 5,
+      data.byteLength - 5,
+    );
+
+    // Add to FEC group buffer for decoding
+    // The FECGroupBuffer will call our callback with recovered RTP packets
+    this.fecGroupBuffer.addPacket(groupId, index, k, n, rtpPayload);
   }
 
   parseRTPPacket(data) {
@@ -439,6 +552,7 @@ export class RTPReceiver extends EventTarget {
       timestamp,
       ssrc,
       payload,
+      arrivalTime: performance.now(), // WFB-ng style: track when packet arrived
     };
   }
 
@@ -526,6 +640,17 @@ export class RTPReceiver extends EventTarget {
     }
     this.reorderBuffer.clear();
     this.expectedSeq = -1;
+
+    // Clean up FEC resources
+    if (this.fecGroupBuffer) {
+      this.fecGroupBuffer.destroy();
+      this.fecGroupBuffer = null;
+    }
+    if (this.fecDecoder) {
+      this.fecDecoder.destroy();
+      this.fecDecoder = null;
+    }
+    this.fecReady = false;
 
     // Stop keepalive
     if (this.keepAliveInterval) {

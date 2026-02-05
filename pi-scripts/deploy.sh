@@ -11,9 +11,20 @@ scp pi-scripts/control-relay.py pi-scripts/bno055_reader.py \
     pi-scripts/direction_estimator.py pi-scripts/stun_client.py \
     pi@arrma-pi2w.local:/home/pi/
 
-# Deploy profile configs and create recordings directory
-ssh pi@arrma-pi2w.local 'mkdir -p /home/pi/profiles /home/pi/recordings'
+# Deploy profile configs and create directories
+ssh pi@arrma-pi2w.local 'mkdir -p /home/pi/profiles /home/pi/recordings /home/pi/rtp-fec-sender'
 scp pi-scripts/profiles/*.ini pi@arrma-pi2w.local:/home/pi/profiles/
+
+# Deploy FEC sender source files
+scp pi-scripts/rtp-fec-sender/*.c pi-scripts/rtp-fec-sender/*.h \
+    pi-scripts/rtp-fec-sender/CMakeLists.txt \
+    pi@arrma-pi2w.local:/home/pi/rtp-fec-sender/
+
+# Build FEC sender on Pi (requires libgstreamer1.0-dev)
+echo "Building FEC sender on Pi..."
+ssh pi@arrma-pi2w.local 'cd /home/pi/rtp-fec-sender && \
+    mkdir -p build && cd build && \
+    cmake .. && make -j2'
 
 # Deploy and reload systemd service (in case it's updated)
 scp pi-scripts/control-relay.service pi@arrma-pi2w.local:/tmp/

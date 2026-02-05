@@ -28,6 +28,10 @@ let depacketizer = null;
 let decoder = null;
 let statsInterval = null;
 
+// Active connection state (for disconnect)
+let activeConnectionUrl = null;
+let activeConnectionToken = null;
+
 // Frame stats
 let lastFrameCount = 0;
 let lastStatsTime = Date.now();
@@ -214,6 +218,18 @@ async function connectViaHolePunch() {
     return;
   }
 
+  // Clean up any existing connection first
+  if (rtpReceiver || rtspClient || decoder) {
+    log("Cleaning up previous connection...");
+    await disconnect();
+    // Small delay to ensure socket is fully released
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  // Store for disconnect
+  activeConnectionUrl = url;
+  activeConnectionToken = token;
+
   try {
     connectBtn.disabled = true;
     connectPunchBtn.disabled = true;
@@ -230,10 +246,12 @@ async function connectViaHolePunch() {
     let currentTimestamp = null;
     let currentNALs = [];
     let accessUnitCorrupted = false; // Track if current access unit has missing packets
+    let accessUnitArrivalTime = null; // WFB-ng style: track first packet arrival for deadline
 
     // Handle packet loss - discard current access unit and reset decoder
     depacketizer.addEventListener("discontinuity", (e) => {
       accessUnitCorrupted = true;
+      accessUnitArrivalTime = null; // Reset arrival tracking
       // Reset decoder to wait for next keyframe - prevents feeding corrupted delta frames
       decoder.resetToKeyframe();
     });
@@ -280,23 +298,37 @@ async function connectViaHolePunch() {
     });
 
     // Step 1: Create RTP receiver and bind UDP socket
-    rtpReceiver = new RTPReceiver(RTP_PORT);
+    rtpReceiver = new RTPReceiver(RTP_PORT, true); // enableFEC=true
     rtpReceiver.addEventListener("log", (e) => log(`[RTP] ${e.detail}`));
 
     rtpReceiver.addEventListener("packet", (e) => {
+      // Track first packet arrival time for this access unit (deadline tracking)
+      if (accessUnitArrivalTime === null && e.detail.arrivalTime) {
+        accessUnitArrivalTime = e.detail.arrivalTime;
+      }
+
       depacketizer.processPacket(e.detail);
 
       if (e.detail.marker && currentNALs.length > 0) {
         if (!accessUnitCorrupted) {
-          decoder.decodeAccessUnit(currentNALs, currentTimestamp);
+          decoder.decodeAccessUnit(
+            currentNALs,
+            currentTimestamp,
+            accessUnitArrivalTime,
+          );
         }
         currentNALs = [];
         currentTimestamp = null;
         accessUnitCorrupted = false;
+        accessUnitArrivalTime = null; // Reset for next access unit
       }
     });
 
-    // Step 1: Bind UDP socket (don't start receive loop yet)
+    // Step 1a: Initialize FEC decoder (WASM)
+    log("Initializing FEC decoder...");
+    await rtpReceiver.initFEC("./fec.wasm");
+
+    // Step 1b: Bind UDP socket (don't start receive loop yet)
     await rtpReceiver.bind("0.0.0.0");
 
     // Step 2: Discover our public endpoint via STUN
@@ -397,6 +429,24 @@ async function disconnect() {
   if (statsInterval) {
     clearInterval(statsInterval);
     statsInterval = null;
+  }
+
+  // Notify server to stop streaming (for FEC sender cleanup)
+  if (activeConnectionUrl && activeConnectionToken) {
+    try {
+      const stopUrl = `${activeConnectionUrl}/stream/stop?token=${encodeURIComponent(activeConnectionToken)}`;
+      await fetch(stopUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      log("Sent stream stop to server");
+    } catch (e) {
+      // Ignore errors - server might be unreachable
+      console.warn("Failed to send stream stop:", e);
+    }
+    activeConnectionUrl = null;
+    activeConnectionToken = null;
   }
 
   // Clear depacketizer first to stop processing
